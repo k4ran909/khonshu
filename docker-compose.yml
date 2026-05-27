@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: khonshu-bot
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TOKEN=${TOKEN}
+      - OWNER=${OWNER}
+      - PREFIX=${PREFIX}
+      - YOUTUBE_COOKIES=${YOUTUBE_COOKIES}
+      - ALLOWED=${ALLOWED}
+      - LAVALINK_HOST=127.0.0.1
+      - LAVALINK_PORT=19133
+      - LAVALINK_PASSWORD=RavenLava_19133
+
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4.2.2
+    container_name: khonshu-lavalink
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./application.yml:/opt/Lavalink/application.yml
+    environment:
+      - TZ=UTC

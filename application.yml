@@ -1,0 +1,89 @@
+server:
+  port: 19133
+  address: 0.0.0.0
+
+lavalink:
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
+      snapshot: false
+    - dependency: "com.github.topi314.lavasrc:lavasrc-plugin:4.8.2"
+      repository: "https://maven.lavalink.dev/releases"
+    - dependency: "com.github.topi314.sponsorblock:sponsorblock-plugin:3.0.1"
+      repository: "https://maven.lavalink.dev/releases"
+    - dependency: "com.github.topi314.lavalyrics:lavalyrics-plugin:1.1.0"
+      repository: "https://maven.lavalink.dev/releases"
+
+  server:
+    password: "RavenLava_19133"
+    sources:
+      youtube: false
+      bandcamp: true
+      soundcloud: true
+      twitch: true
+      vimeo: true
+      nico: false
+      http: true
+      local: false
+    filters:
+      volume: true
+      equalizer: true
+      karaoke: true
+      timescale: true
+      tremolo: true
+      vibrato: true
+      distortion: true
+      rotation: true
+      channelMix: true
+      lowPass: true
+    bufferDurationMs: 400
+    frameBufferDurationMs: 5000
+    opusEncodingQuality: 10
+    resamplingQuality: LOW
+    trackStuckThresholdMs: 10000
+    useSeekGhosting: true
+    playerUpdateInterval: 5
+    youtubeSearchEnabled: true
+    soundcloudSearchEnabled: true
+
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    clients:
+      - WEB
+      - M_WEB
+      - MUSIC
+      - WEBEMBEDDED
+      - ANDROID_VR
+      - TV
+      - TVHTML5EMBEDDED
+    oauth:
+      enabled: false
+  lavasrc:
+    providers:
+      - "ytsearch:\"%ISRC%\""
+      - "ytsearch:%QUERY%"
+    sources:
+      spotify: true
+      applemusic: false
+      deezer: false
+      yandexmusic: false
+      flowerytts: false
+      youtube: false
+    spotify:
+      clientId: "cb0c133f3f9b42059b422b1f68e2d04a"
+      clientSecret: "d1e72160683d4d37b885f3aff0d33414"
+      countryCode: "US"
+  lavalyrics:
+    sources:
+      - spotify
+      - youtube
+
+logging:
+  level:
+    root: INFO
+    lavalink: INFO
+    moe.kyokobot.koe: TRACE
+    moe.kyokobot.koe.internal.dave: TRACE

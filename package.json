@@ -1,0 +1,41 @@
+{
+  "name": "khonshu",
+  "version": "2.0.0",
+  "description": "Khonshu Music Bot with DAVE E2EE voice support. Streams audio directly from YouTube via yt-dlp + ffmpeg.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "postinstall": "node patch-stream.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheDiscorders/SelfRythm.git"
+  },
+  "author": "The Discorders",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/TheDiscorders/SelfRythm/issues"
+  },
+  "homepage": "https://github.com/TheDiscorders/SelfRythm#readme",
+  "dependencies": {
+    "@discordjs/voice": "^0.19.0",
+    "@gabrielmaialva33/discord-video-stream": "^3.4.0",
+    "@snazzah/davey": "latest",
+    "ascii-table": "^0.0.9",
+    "discord.js-selfbot-v13": "^3.7.1",
+    "enmap": "^5.9.8",
+    "ffmpeg-static": "^5.3.0",
+    "isomorphic-unfetch": "^4.0.2",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5",
+    "shoukaku": "^4.3.0",
+    "sodium-native": "^4.0.0",
+    "spotify-url-info": "^3.2.16",
+    "youtube-sr": "^4.3.11",
+    "youtubei.js": "latest",
+    "ytdl-core": "^4.11.5"
+  },
+  "overrides": {
+    "better-sqlite3": "^11.3.0"
+  }
+}
