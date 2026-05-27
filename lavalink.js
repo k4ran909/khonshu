@@ -131,7 +131,7 @@ let nodeConnected = false;
  * @param {Object} client - discord.js-selfbot-v13 Client
  */
 function init(client) {
-    if (process.env.DISABLE_LAVALINK === "true" || process.env.LAVALINK_HOST === "disabled") {
+    if (process.env.DISABLE_LAVALINK === "true" || LAVALINK_HOST === "disabled") {
         console.log("[LAVALINK] Lavalink is explicitly disabled via environment variables. Using local E2EE playback.");
         nodeConnected = false;
         return null;
