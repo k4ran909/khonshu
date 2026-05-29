@@ -221,7 +221,12 @@ module.exports.run = async (client, message, args) => {
             bitrateAudio: 128,
             includeAudio: true,
             h26xPreset: "ultrafast",        // Use ultrafast for minimum CPU overhead!
-            minimizeLatency: true
+            minimizeLatency: true,
+            customFfmpegFlags: ["-loglevel", "warning"]
+        });
+
+        command.on("stderr", (line) => {
+            utils.log(`[VPLAY FFMPEG STDERR] ${line}`);
         });
 
         // Store play objects in queue construct
