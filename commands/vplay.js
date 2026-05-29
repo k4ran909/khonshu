@@ -321,49 +321,23 @@ const http = require("http");
 /**
  * @description Verifies if a stream URL is responsive and returns valid data, following up to 5 redirects
  */
-function verifyStreamUrl(urlStr, timeoutMs = 2500, redirectCount = 0) {
-    if (redirectCount > 5) return Promise.resolve(false);
-    return new Promise((resolve) => {
-        try {
-            const parsed = new URL(urlStr);
-            const transport = parsed.protocol === "http:" ? http : https;
-            const req = transport.request({
-                method: "GET",
-                hostname: parsed.hostname,
-                port: parsed.port || undefined,
-                path: parsed.pathname + parsed.search,
-                headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Range": "bytes=0-1024"
-                },
-                timeout: timeoutMs
-            }, (res) => {
-                res.resume();
-                // Handle HTTP redirects (3xx)
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    let nextUrl = res.headers.location;
-                    if (!nextUrl.startsWith("http")) {
-                        nextUrl = new URL(nextUrl, parsed.origin).href;
-                    }
-                    verifyStreamUrl(nextUrl, timeoutMs, redirectCount + 1).then(resolve);
-                    return;
-                }
-                
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    resolve(true);
-                } else if (res.statusCode === 206) {
-                    resolve(true);
-                } else {
-                    resolve(false);
-                }
-            });
-            req.on("error", () => resolve(false));
-            req.on("timeout", () => { req.destroy(); resolve(false); });
-            req.end();
-        } catch (e) {
-            resolve(false);
-        }
-    });
+async function verifyStreamUrl(urlStr, timeoutMs = 2500) {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(urlStr, {
+            method: "HEAD",
+            signal: controller.signal,
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Range": "bytes=0-1024"
+            }
+        });
+        clearTimeout(timeout);
+        return res.ok || res.status === 206;
+    } catch (e) {
+        return false;
+    }
 }
 
 function extractVideoId(url) {
@@ -380,33 +354,20 @@ function extractVideoId(url) {
     return null;
 }
 
-function fetchJSON(urlStr, timeoutMs = 10000) {
-    return new Promise((resolve) => {
-        try {
-            const parsed = new URL(urlStr);
-            const transport = parsed.protocol === "http:" ? http : https;
-            const req = transport.get({
-                hostname: parsed.hostname,
-                port: parsed.port || undefined,
-                path: parsed.pathname + parsed.search,
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-                timeout: timeoutMs
-            }, (res) => {
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    fetchJSON(res.headers.location, timeoutMs).then(resolve);
-                    return;
-                }
-                if (res.statusCode !== 200) { resolve(null); res.resume(); return; }
-                let body = "";
-                res.on("data", chunk => body += chunk);
-                res.on("end", () => {
-                    try { resolve(JSON.parse(body)); } catch (e) { resolve(null); }
-                });
-            });
-            req.on("error", () => resolve(null));
-            req.on("timeout", () => { req.destroy(); resolve(null); });
-        } catch (e) { resolve(null); }
-    });
+async function fetchJSON(urlStr, timeoutMs = 10000) {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(urlStr, {
+            signal: controller.signal,
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+        });
+        clearTimeout(timeout);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch (e) {
+        return null;
+    }
 }
 
 let _vCachedPiped = null;

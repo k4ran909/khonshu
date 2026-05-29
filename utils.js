@@ -48,39 +48,20 @@ function extractVideoId(url) {
 /**
  * @description Fetch JSON from an HTTP/HTTPS URL with timeout and redirect following
  */
-function fetchJSON(urlStr, timeoutMs = 10000) {
-    return new Promise((resolve) => {
-        try {
-            const parsed = new URL(urlStr);
-            const transport = parsed.protocol === "http:" ? http : https;
-            const req = transport.get({
-                hostname: parsed.hostname,
-                port: parsed.port || undefined,
-                path: parsed.pathname + parsed.search,
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-                timeout: timeoutMs
-            }, (res) => {
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    fetchJSON(res.headers.location, timeoutMs).then(resolve);
-                    return;
-                }
-                if (res.statusCode !== 200) {
-                    resolve(null);
-                    res.resume(); // drain
-                    return;
-                }
-                let body = "";
-                res.on("data", chunk => body += chunk);
-                res.on("end", () => {
-                    try { resolve(JSON.parse(body)); } catch (e) { resolve(null); }
-                });
-            });
-            req.on("error", () => resolve(null));
-            req.on("timeout", () => { req.destroy(); resolve(null); });
-        } catch (e) {
-            resolve(null);
-        }
-    });
+async function fetchJSON(urlStr, timeoutMs = 10000) {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(urlStr, {
+            signal: controller.signal,
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+        });
+        clearTimeout(timeout);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch (e) {
+        return null;
+    }
 }
 
 // ─── Dynamic Instance Discovery ───
