@@ -17,6 +17,8 @@ services:
       - LAVALINK_HOST=127.0.0.1
       - LAVALINK_PORT=19133
       - LAVALINK_PASSWORD=RavenLava_19133
+      - HTTP_PROXY=http://127.0.0.1:1080
+      - HTTPS_PROXY=http://127.0.0.1:1080
 
   lavalink:
     image: ghcr.io/lavalink-devs/lavalink:4.2.2
@@ -27,3 +29,24 @@ services:
       - ./application.yml:/opt/Lavalink/application.yml
     environment:
       - TZ=UTC
+      - HTTPCONFIG_PROXYHOST=127.0.0.1
+      - HTTPCONFIG_PROXYPORT=1080
+
+  warp:
+    image: caomingjun/warp:latest
+    container_name: khonshu-warp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1080:1080"
+    cap_add:
+      - NET_ADMIN
+      - MKNOD
+      - AUDIT_WRITE
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    volumes:
+      - warp-data:/var/lib/cloudflare-warp
+
+volumes:
+  warp-data:

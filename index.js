@@ -5,6 +5,18 @@ try {
   console.error("[INIT] Failed to run E2EE patch-stream.js on startup:", e);
 }
 
+// Setup global undici proxy if HTTP_PROXY is defined in environment (Node 20+ fetch support)
+if (process.env.HTTP_PROXY) {
+  try {
+    const { setGlobalDispatcher, ProxyAgent } = require("undici");
+    const proxyAgent = new ProxyAgent(process.env.HTTP_PROXY);
+    setGlobalDispatcher(proxyAgent);
+    console.log(`[INIT] Globally configured undici ProxyAgent for HTTP_PROXY: ${process.env.HTTP_PROXY}`);
+  } catch (e) {
+    console.error("[INIT] Failed to configure global undici ProxyAgent:", e);
+  }
+}
+
 // Ensure ffmpeg-static path is globally available in environment variables for fluent-ffmpeg (both CJS and ESM)
 try {
   const isAlpine = require("fs").existsSync("/etc/alpine-release");
