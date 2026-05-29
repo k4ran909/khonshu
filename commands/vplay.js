@@ -385,17 +385,77 @@ async function getActiveInvidiousInstances() {
     return _vCachedInvidious;
 }
 
+function parseCookieFile() {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const cookiePath = path.join(process.cwd(), 'cookies.txt');
+        if (!fs.existsSync(cookiePath)) return null;
+        const content = fs.readFileSync(cookiePath, 'utf8');
+        const cookies = content.split('\n')
+            .filter(line => !line.startsWith('#') && line.trim().length > 0)
+            .map(line => {
+                const parts = line.split('\t');
+                if (parts.length >= 7) {
+                    return `${parts[5].trim()}=${parts[6].trim()}`;
+                }
+                return null;
+            })
+            .filter(Boolean);
+        return cookies.length > 0 ? cookies.join('; ') : null;
+    } catch (e) {
+        console.log(`[COOKIES] Failed to parse cookies.txt: ${e.message}`);
+        return null;
+    }
+}
+
+function raceInstances(urls, fetchAndParseFn) {
+    return new Promise((resolve) => {
+        let resolved = false;
+        let pending = urls.length;
+        if (pending === 0) return resolve(null);
+
+        urls.forEach(url => {
+            fetchAndParseFn(url).then(res => {
+                if (resolved) return;
+                if (res) {
+                    resolved = true;
+                    resolve(res);
+                } else {
+                    pending--;
+                    if (pending === 0) resolve(null);
+                }
+            }).catch(() => {
+                if (resolved) return;
+                pending--;
+                if (pending === 0) resolve(null);
+            });
+        });
+    });
+}
+
 async function fetchFallbackVideo(videoUrl) {
     const videoId = extractVideoId(videoUrl);
     if (!videoId) return null;
     console.log(`[VPLAY FALLBACK] Extracted video ID: ${videoId}`);
 
-    // Try youtubei.js with multiple client types
-    const clientTypes = ['WEB', 'ANDROID', 'IOS'];
+    const cookieString = parseCookieFile();
+    if (cookieString) {
+        console.log(`[VPLAY INNERTUBE] Using cookies for authentication (${cookieString.length} chars)`);
+    } else {
+        console.log(`[VPLAY INNERTUBE] No cookies available - may be blocked on datacenter IPs`);
+    }
+
+    // Try youtubei.js with multiple client types including smart TV
+    const clientTypes = ['TV_EMBEDDED', 'TV', 'WEB', 'ANDROID', 'IOS', 'YTMUSIC', 'WEB_EMBEDDED'];
     let yt;
     try {
         const { Innertube } = await import('youtubei.js');
-        yt = await Innertube.create({ retrieve_player: true });
+        const createOpts = { retrieve_player: true, generate_session_locally: true };
+        if (cookieString) {
+            createOpts.cookie = cookieString;
+        }
+        yt = await Innertube.create(createOpts);
     } catch (err) {
         console.log(`[VPLAY INNERTUBE] Failed to create Innertube instance: ${err.message}`);
     }
@@ -404,120 +464,119 @@ async function fetchFallbackVideo(videoUrl) {
         for (const clientType of clientTypes) {
             try {
                 console.log(`[VPLAY INNERTUBE] Trying youtubei.js (${clientType} client) for video: ${videoId}`);
-                const info = await yt.getInfo(videoId, clientType === 'ANDROID' ? 'ANDROID' : clientType === 'IOS' ? 'IOS' : undefined);
+                const info = await yt.getInfo(videoId, clientType);
 
-            if (!info || !info.streaming_data) {
-                console.log(`[VPLAY INNERTUBE] No streaming data from ${clientType}`);
-                continue;
-            }
+                if (!info || !info.streaming_data) {
+                    console.log(`[VPLAY INNERTUBE] No streaming data from ${clientType}`);
+                    continue;
+                }
 
-            const getFormatUrl = (format) => {
-                if (format.url) return format.url;
-                try {
-                    if (typeof format.decipher === 'function') {
-                        return format.decipher(yt.session.player);
+                const getFormatUrl = (format) => {
+                    if (format.url) return format.url;
+                    try {
+                        if (typeof format.decipher === 'function') {
+                            return format.decipher(yt.session.player);
+                        }
+                    } catch (e) { /* skip */ }
+                    return null;
+                };
+
+                // Try combined formats first (video+audio in one stream)
+                const combined = info.streaming_data.formats || [];
+                const mp4Combined = combined
+                    .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
+                    .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
+                for (const fmt of mp4Combined) {
+                    const url = getFormatUrl(fmt);
+                    if (url) {
+                        console.log(`[VPLAY INNERTUBE] SUCCESS via ${clientType}! Combined: ${fmt.quality_label || fmt.height + 'p'}`);
+                        return url;
                     }
-                } catch (e) { /* skip */ }
-                return null;
-            };
-
-            // Try combined formats first (video+audio in one stream)
-            const combined = info.streaming_data.formats || [];
-            const mp4Combined = combined
-                .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
-                .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
-            for (const fmt of mp4Combined) {
-                const url = getFormatUrl(fmt);
-                if (url) {
-                    console.log(`[VPLAY INNERTUBE] SUCCESS via ${clientType}! Combined: ${fmt.quality_label || fmt.height + 'p'}`);
-                    return url;
                 }
-            }
 
-            // Try adaptive video formats
-            const adaptive = info.streaming_data.adaptive_formats || [];
-            const videoFormats = adaptive
-                .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
-                .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
-            for (const fmt of videoFormats) {
-                const url = getFormatUrl(fmt);
-                if (url) {
-                    console.log(`[VPLAY INNERTUBE] SUCCESS via ${clientType}! Adaptive: ${fmt.quality_label || fmt.height + 'p'}`);
-                    return url;
+                // Try adaptive video formats
+                const adaptive = info.streaming_data.adaptive_formats || [];
+                const videoFormats = adaptive
+                    .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
+                    .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
+                for (const fmt of videoFormats) {
+                    const url = getFormatUrl(fmt);
+                    if (url) {
+                        console.log(`[VPLAY INNERTUBE] SUCCESS via ${clientType}! Adaptive: ${fmt.quality_label || fmt.height + 'p'}`);
+                        return url;
+                    }
                 }
-            }
 
-            console.log(`[VPLAY INNERTUBE] ${clientType}: formats found but URLs inaccessible`);
-        } catch (e) {
-            console.log(`[VPLAY INNERTUBE] ${clientType} failed: ${e.message}`);
+                console.log(`[VPLAY INNERTUBE] ${clientType}: formats found but URLs inaccessible`);
+            } catch (e) {
+                console.log(`[VPLAY INNERTUBE] ${clientType} failed: ${e.message}`);
+            }
         }
     }
-}
-    console.log('[VPLAY FALLBACK] InnerTube exhausted, trying Piped/Invidious...');
 
+    console.log('[VPLAY FALLBACK] InnerTube exhausted, trying Piped/Invidious fallbacks...');
+
+    // Try Piped instances concurrently
     const pipedInstances = await getActivePipedInstances();
-
-
-    for (const instance of pipedInstances.slice(0, 5)) {
+    const pipedUrls = pipedInstances.slice(0, 6);
+    console.log(`[VPLAY FALLBACK] Racing ${pipedUrls.length} Piped instances concurrently...`);
+    const pipedResult = await raceInstances(pipedUrls, async (instance) => {
         try {
-            console.log(`[VPLAY FALLBACK] Trying Piped: ${instance}/streams/${videoId}`);
-            const data = await fetchJSON(`${instance}/streams/${videoId}`, 10000);
+            const data = await fetchJSON(`${instance}/streams/${videoId}`, 4000);
             if (data && data.videoStreams && data.videoStreams.length > 0) {
                 const mp4Streams = data.videoStreams
                     .filter(s => s.url && s.format === "MPEG_4")
                     .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
                 if (mp4Streams.length > 0) {
                     let streamUrl = mp4Streams[0].url;
-                    // Piped streams are already proxied through the instance, but verify
                     if (streamUrl.includes("googlevideo.com") || streamUrl.includes("youtube.com")) {
-                        // Rewrite to proxy through the Piped instance
                         const proxyUrl = `${instance}/proxy?host=${new URL(streamUrl).hostname}&path=${encodeURIComponent(new URL(streamUrl).pathname + new URL(streamUrl).search)}`;
-                        console.log(`[VPLAY FALLBACK] Piped SUCCESS! Video: ${mp4Streams[0].quality} (proxied)`);
+                        console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${mp4Streams[0].quality} (proxied)`);
                         return proxyUrl;
                     }
-                    console.log(`[VPLAY FALLBACK] Piped SUCCESS! Video: ${mp4Streams[0].quality}`);
+                    console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${mp4Streams[0].quality}`);
                     return streamUrl;
                 }
                 const anyStream = data.videoStreams.filter(s => s.url)[0];
                 if (anyStream) {
-                    console.log(`[VPLAY FALLBACK] Piped SUCCESS! Video: ${anyStream.quality}`);
+                    console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${anyStream.quality}`);
                     return anyStream.url;
                 }
             }
-            if (data && data.error) console.log(`[VPLAY FALLBACK] Piped ${instance} error: ${data.error}`);
-        } catch (e) {
-            console.log(`[VPLAY FALLBACK] Piped ${instance} exception: ${e.message}`);
-        }
-    }
+        } catch (e) {}
+        return null;
+    });
 
+    if (pipedResult) return pipedResult;
+
+    // Try Invidious instances concurrently
     const invidiousInstances = await getActiveInvidiousInstances();
-    for (const instance of invidiousInstances.slice(0, 5)) {
+    const invidiousUrls = invidiousInstances.slice(0, 6);
+    console.log(`[VPLAY FALLBACK] Racing ${invidiousUrls.length} Invidious instances concurrently...`);
+    const invidiousResult = await raceInstances(invidiousUrls, async (instance) => {
         try {
-            console.log(`[VPLAY FALLBACK] Trying Invidious: ${instance}/api/v1/videos/${videoId}`);
-            const data = await fetchJSON(`${instance}/api/v1/videos/${videoId}`, 10000);
+            const data = await fetchJSON(`${instance}/api/v1/videos/${videoId}`, 4000);
             if (data && data.formatStreams && data.formatStreams.length > 0) {
                 const mp4Streams = data.formatStreams
                     .filter(f => f.url && f.type && f.type.includes("video/mp4"))
                     .sort((a, b) => Math.abs(parseInt(a.qualityLabel || "0") - 360) - Math.abs(parseInt(b.qualityLabel || "0") - 360));
                 if (mp4Streams.length > 0) {
-                    // Use the /latest_version proxy endpoint which reliably serves video data
                     const itag = mp4Streams[0].itag;
                     if (itag) {
                         const proxyUrl = `${instance}/latest_version?id=${videoId}&itag=${itag}&local=true`;
-                        console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel} (via /latest_version itag=${itag})`);
+                        console.log(`[VPLAY FALLBACK] Invidious SUCCESS from ${instance}! Video: ${mp4Streams[0].qualityLabel} (via /latest_version)`);
                         return proxyUrl;
                     }
-                    // Fallback: use the URL as-is if itag not available
-                    console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel}`);
                     return mp4Streams[0].url;
                 }
             }
-            if (data && data.error) console.log(`[VPLAY FALLBACK] Invidious ${instance} error: ${data.error}`);
-        } catch (e) {
-            console.log(`[VPLAY FALLBACK] Invidious ${instance} exception: ${e.message}`);
-        }
-    }
+        } catch (e) {}
+        return null;
+    });
 
+    if (invidiousResult) return invidiousResult;
+
+    console.log("[VPLAY FALLBACK] All instances and fallback APIs exhausted. No video source found.");
     return null;
 }
 
