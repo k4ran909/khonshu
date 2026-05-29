@@ -744,7 +744,7 @@ async function fetchFallbackVideo(videoUrl) {
                         finalUrl = `${instance}/proxy?host=${new URL(streamUrl).hostname}&path=${encodeURIComponent(new URL(streamUrl).pathname + new URL(streamUrl).search)}`;
                     }
                     console.log(`[VPLAY FALLBACK] Piped checking stream: ${finalUrl}`);
-                    const ok = await verifyStreamUrl(finalUrl, 2000);
+                    const ok = await verifyStreamUrl(finalUrl, 8000);
                     if (ok) {
                         console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${mp4Streams[0].quality} (proxied)`);
                         return finalUrl;
@@ -759,7 +759,7 @@ async function fetchFallbackVideo(videoUrl) {
                         finalUrl = `${instance}/proxy?host=${new URL(finalUrl).hostname}&path=${encodeURIComponent(new URL(finalUrl).pathname + new URL(finalUrl).search)}`;
                     }
                     console.log(`[VPLAY FALLBACK] Piped checking stream: ${finalUrl}`);
-                    const ok = await verifyStreamUrl(finalUrl, 2000);
+                    const ok = await verifyStreamUrl(finalUrl, 8000);
                     if (ok) {
                         console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${anyStream.quality}`);
                         return finalUrl;
@@ -790,7 +790,7 @@ async function fetchFallbackVideo(videoUrl) {
                     if (itag) {
                         const proxyUrl = `${instance}/latest_version?id=${videoId}&itag=${itag}&local=true`;
                         console.log(`[VPLAY FALLBACK] Invidious checking stream: ${proxyUrl}`);
-                        const ok = await verifyStreamUrl(proxyUrl, 2000);
+                        const ok = await verifyStreamUrl(proxyUrl, 8000);
                         if (ok) {
                             console.log(`[VPLAY FALLBACK] Invidious SUCCESS from ${instance}! Video: ${mp4Streams[0].qualityLabel} (via /latest_version)`);
                             return proxyUrl;
