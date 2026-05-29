@@ -36,8 +36,9 @@ services:
     image: caomingjun/warp:latest
     container_name: khonshu-warp
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:1080:1080"
+    network_mode: host
+    environment:
+      - GOST_ARGS=-L 127.0.0.1:1080
     cap_add:
       - NET_ADMIN
       - MKNOD
