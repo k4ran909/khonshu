@@ -37,8 +37,21 @@ module.exports.run = async (client, message, args) => {
     let voiceChannel;
 
     if (message._isDM) {
-        // Use the tracked owner voice channel (updated in real-time via voiceStateUpdate)
-        voiceChannel = global.ownerVoiceChannel;
+        // Dynamic real-time lookup across all guilds to find the owner's active voice channel
+        let ownerChannel = null;
+        if (global.config.owner) {
+            for (const [, guild] of client.guilds.cache) {
+                try {
+                    const member = guild.members.cache.get(global.config.owner) || await guild.members.fetch(global.config.owner);
+                    if (member && member.voice && member.voice.channel) {
+                        ownerChannel = member.voice.channel;
+                        global.ownerVoiceChannel = ownerChannel; // Sync cache
+                        break;
+                    }
+                } catch (e) {}
+            }
+        }
+        voiceChannel = ownerChannel || global.ownerVoiceChannel;
         if (!voiceChannel) {
             return message.channel.send("❌ You need to be in a voice channel first. Join one and try again.");
         }
