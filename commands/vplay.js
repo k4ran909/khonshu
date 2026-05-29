@@ -211,7 +211,7 @@ module.exports.run = async (client, message, args) => {
         client.off('raw', rawListener);
         
         // Transcode and prepare the combined stream via ffmpeg
-        utils.log("[VPLAY] Preparing video transcode stream...");
+        utils.log(`[VPLAY] Preparing video transcode stream from URL: ${directUrl.substring(0, 200)}...`);
         const { command, output, promise } = prepareStream(directUrl, {
             videoCodec: "H264",
             width: useCamera ? 640 : 1280,   // 360p for webcam square, 720p for screenshare!
@@ -494,31 +494,22 @@ async function fetchFallbackVideo(videoUrl) {
     for (const instance of invidiousInstances.slice(0, 5)) {
         try {
             console.log(`[VPLAY FALLBACK] Trying Invidious: ${instance}/api/v1/videos/${videoId}`);
-            // Use local=true to get proxied URLs through the Invidious instance
-            const data = await fetchJSON(`${instance}/api/v1/videos/${videoId}?local=true`, 10000);
+            const data = await fetchJSON(`${instance}/api/v1/videos/${videoId}`, 10000);
             if (data && data.formatStreams && data.formatStreams.length > 0) {
                 const mp4Streams = data.formatStreams
                     .filter(f => f.url && f.type && f.type.includes("video/mp4"))
                     .sort((a, b) => Math.abs(parseInt(a.qualityLabel || "0") - 360) - Math.abs(parseInt(b.qualityLabel || "0") - 360));
                 if (mp4Streams.length > 0) {
-                    let streamUrl = mp4Streams[0].url;
-                    // Double-check: rewrite any remaining googlevideo.com URLs to proxy through instance
-                    if (streamUrl.includes("googlevideo.com")) {
-                        try {
-                            const parsed = new URL(streamUrl);
-                            const instanceHost = new URL(instance).host;
-                            parsed.hostname = instanceHost;
-                            parsed.protocol = "https:";
-                            parsed.port = "";
-                            streamUrl = parsed.toString();
-                            console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel} (proxied through ${instanceHost})`);
-                        } catch (e) {
-                            console.log(`[VPLAY FALLBACK] Invidious URL rewrite failed, using raw URL`);
-                        }
-                    } else {
-                        console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel}`);
+                    // Use the /latest_version proxy endpoint which reliably serves video data
+                    const itag = mp4Streams[0].itag;
+                    if (itag) {
+                        const proxyUrl = `${instance}/latest_version?id=${videoId}&itag=${itag}&local=true`;
+                        console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel} (via /latest_version itag=${itag})`);
+                        return proxyUrl;
                     }
-                    return streamUrl;
+                    // Fallback: use the URL as-is if itag not available
+                    console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel}`);
+                    return mp4Streams[0].url;
                 }
             }
             if (data && data.error) console.log(`[VPLAY FALLBACK] Invidious ${instance} error: ${data.error}`);
