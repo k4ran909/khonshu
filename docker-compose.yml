@@ -7,38 +7,33 @@ services:
       dockerfile: Dockerfile
     container_name: khonshu-bot
     restart: unless-stopped
-    network_mode: host
     environment:
       - TOKEN=${TOKEN}
       - OWNER=${OWNER}
       - PREFIX=${PREFIX}
       - YOUTUBE_COOKIES=${YOUTUBE_COOKIES}
       - ALLOWED=${ALLOWED}
-      - LAVALINK_HOST=127.0.0.1
+      - LAVALINK_HOST=khonshu-lavalink
       - LAVALINK_PORT=19133
       - LAVALINK_PASSWORD=RavenLava_19133
-      - HTTP_PROXY=http://127.0.0.1:1080
-      - HTTPS_PROXY=http://127.0.0.1:1080
+      - HTTP_PROXY=http://khonshu-warp:1080
+      - HTTPS_PROXY=http://khonshu-warp:1080
 
   lavalink:
     image: ghcr.io/lavalink-devs/lavalink:4.2.2
     container_name: khonshu-lavalink
     restart: unless-stopped
-    network_mode: host
     volumes:
       - ./application.yml:/opt/Lavalink/application.yml
     environment:
       - TZ=UTC
-      - HTTPCONFIG_PROXYHOST=127.0.0.1
+      - HTTPCONFIG_PROXYHOST=khonshu-warp
       - HTTPCONFIG_PROXYPORT=1080
 
   warp:
     image: caomingjun/warp:latest
     container_name: khonshu-warp
     restart: unless-stopped
-    network_mode: host
-    environment:
-      - GOST_ARGS=-L 127.0.0.1:1080
     cap_add:
       - NET_ADMIN
       - MKNOD
