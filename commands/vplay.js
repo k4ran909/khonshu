@@ -434,6 +434,102 @@ function raceInstances(urls, fetchAndParseFn) {
     });
 }
 
+async function fetchCobaltVideo(videoUrl) {
+    const videoId = extractVideoId(videoUrl);
+    if (!videoId) return null;
+
+    // Try to discover working Cobalt instances dynamically
+    let cobaltEndpoints = [];
+    try {
+        console.log("[VPLAY COBALT] Fetching active instances...");
+        const instances = await fetchJSON("https://cobalt-api.ayo.tf/api/status", 5000);
+        if (instances && Array.isArray(instances)) {
+            cobaltEndpoints = instances
+                .filter(i => i.api_online && i.api_url)
+                .map(i => i.api_url);
+        }
+    } catch (e) {}
+    
+    if (cobaltEndpoints.length < 2) {
+        try {
+            const instances2 = await fetchJSON("https://cobalt.directory/api/instances.json", 5000);
+            if (instances2 && Array.isArray(instances2)) {
+                const extra = instances2
+                    .filter(i => i.protocol === "https" && i.api && i.score > 50)
+                    .map(i => i.api);
+                cobaltEndpoints = [...new Set([...cobaltEndpoints, ...extra])];
+            }
+        } catch (e) {}
+    }
+
+    if (cobaltEndpoints.length === 0) {
+        cobaltEndpoints = [
+            "https://api.cobalt.tools",
+            "https://cobalt-api.kwiatekmiki.com",
+            "https://cobalt.canine.tools",
+            "https://cobalt-api.hyper.lol"
+        ];
+    }
+    
+    console.log(`[VPLAY COBALT] Trying ${cobaltEndpoints.length} Cobalt endpoints...`);
+
+    for (const endpoint of cobaltEndpoints.slice(0, 5)) {
+        try {
+            console.log(`[VPLAY COBALT] Trying ${endpoint} for video: ${videoId}`);
+            const result = await new Promise((resolve) => {
+                const postData = JSON.stringify({
+                    url: `https://www.youtube.com/watch?v=${videoId}`,
+                    vQuality: "360",
+                    vCodec: "h264",
+                    filenamePattern: "basic"
+                });
+
+                const parsed = new URL(endpoint);
+                const req = https.request({
+                    hostname: parsed.hostname,
+                    port: parsed.port || 443,
+                    path: "/",
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "Content-Length": Buffer.byteLength(postData),
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    },
+                    timeout: 12000
+                }, (res) => {
+                    let body = "";
+                    res.on("data", chunk => body += chunk);
+                    res.on("end", () => {
+                        try {
+                            const data = JSON.parse(body);
+                            resolve(data);
+                        } catch (e) { resolve(null); }
+                    });
+                });
+                req.on("error", () => resolve(null));
+                req.on("timeout", () => { req.destroy(); resolve(null); });
+                req.write(postData);
+                req.end();
+            });
+
+            if (result && result.url) {
+                console.log(`[VPLAY COBALT] SUCCESS from ${endpoint}!`);
+                return result.url;
+            }
+
+            if (result && result.status === "error") {
+                console.log(`[VPLAY COBALT] ${endpoint} error: ${result.error?.code || result.text || 'unknown'}`);
+            }
+        } catch (e) {
+            console.log(`[VPLAY COBALT] ${endpoint} failed: ${e.message}`);
+        }
+    }
+
+    console.log("[VPLAY COBALT] All endpoints exhausted");
+    return null;
+}
+
 async function fetchFallbackVideo(videoUrl) {
     const videoId = extractVideoId(videoUrl);
     if (!videoId) return null;
@@ -514,7 +610,11 @@ async function fetchFallbackVideo(videoUrl) {
         }
     }
 
-    console.log('[VPLAY FALLBACK] InnerTube exhausted, trying Piped/Invidious fallbacks...');
+    console.log('[VPLAY FALLBACK] InnerTube exhausted, trying Cobalt video resolver...');
+    const cobaltUrl = await fetchCobaltVideo(videoUrl);
+    if (cobaltUrl) return cobaltUrl;
+
+    console.log('[VPLAY FALLBACK] Cobalt exhausted, trying Piped/Invidious fallbacks...');
 
     // Try Piped instances concurrently
     const pipedInstances = await getActivePipedInstances();
