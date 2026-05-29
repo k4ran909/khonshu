@@ -207,25 +207,38 @@ async function fetchYouTubeJSAudio(videoUrl) {
     }
 
     const clientTypes = ['TV_EMBEDDED', 'TV', 'WEB', 'ANDROID', 'IOS', 'YTMUSIC', 'WEB_EMBEDDED'];
-    let yt;
+    let ytAuth, ytGuest;
     try {
         const { Innertube } = await import('youtubei.js');
         const createOpts = { retrieve_player: true, generate_session_locally: true };
-        if (cookieString) {
-            createOpts.cookie = cookieString;
+        
+        try {
+            ytGuest = await Innertube.create(createOpts);
+            console.log('[INNERTUBE] Guest instance initialized successfully');
+        } catch (e) {
+            console.log(`[INNERTUBE] Guest instance creation failed: ${e.message}`);
         }
-        yt = await Innertube.create(createOpts);
+
+        if (cookieString) {
+            try {
+                const authOpts = { ...createOpts, cookie: cookieString };
+                ytAuth = await Innertube.create(authOpts);
+                console.log('[INNERTUBE] Auth instance initialized with cookies');
+            } catch (e) {
+                console.log(`[INNERTUBE] Auth instance creation failed: ${e.message}`);
+            }
+        }
     } catch (err) {
-        console.log(`[INNERTUBE] Failed to create Innertube instance: ${err.message}`);
+        console.log(`[INNERTUBE] Failed to load InnerTube library: ${err.message}`);
         return null;
     }
 
     // Helper to get URL from a format (handles both direct and ciphered)
-    const getFormatUrl = (format) => {
+    const getFormatUrl = (format, ytInstance) => {
         if (format.url) return format.url;
         try {
             if (typeof format.decipher === 'function') {
-                return format.decipher(yt.session.player);
+                return format.decipher(ytInstance.session.player);
             }
         } catch (e) {
             console.log(`[INNERTUBE] Decipher failed for format: ${e.message}`);
@@ -234,7 +247,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
     };
 
     // Helper to extract audio URL from streaming data
-    const extractFromStreamingData = (streamingData, label) => {
+    const extractFromStreamingData = (streamingData, ytInstance, label) => {
         if (!streamingData) return null;
         const adaptive = streamingData.adaptive_formats || [];
         const combined = streamingData.formats || [];
@@ -246,7 +259,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
             .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
         for (const fmt of audioFormats) {
-            const url = getFormatUrl(fmt);
+            const url = getFormatUrl(fmt, ytInstance);
             if (url) {
                 console.log(`[INNERTUBE] SUCCESS! Got audio via ${label}: ${fmt.mime_type} (${fmt.bitrate}bps)`);
                 return url;
@@ -255,7 +268,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
 
         // Try combined formats (video+audio) as fallback
         for (const fmt of combined) {
-            const url = getFormatUrl(fmt);
+            const url = getFormatUrl(fmt, ytInstance);
             if (url) {
                 console.log(`[INNERTUBE] SUCCESS! Got combined format via ${label}: ${fmt.mime_type}`);
                 return url;
@@ -264,42 +277,51 @@ async function fetchYouTubeJSAudio(videoUrl) {
         return null;
     };
 
+    // Try getInfo and getBasicInfo across clients with both Auth and Guest instances
+    const tryClient = async (clientType, useBasic = false) => {
+        if (ytAuth) {
+            try {
+                const label = `${clientType}/${useBasic ? 'getBasicInfo' : 'getInfo'} + AUTH`;
+                console.log(`[INNERTUBE] Trying ${label} for: ${videoId}`);
+                const info = useBasic 
+                    ? await ytAuth.getBasicInfo(videoId, clientType)
+                    : await ytAuth.getInfo(videoId, clientType);
+                if (info && info.streaming_data) {
+                    const result = extractFromStreamingData(info.streaming_data, ytAuth, label);
+                    if (result) return result;
+                }
+            } catch (e) {
+                console.log(`[INNERTUBE] ${clientType} AUTH failed: ${e.message}`);
+            }
+        }
+        if (ytGuest) {
+            try {
+                const label = `${clientType}/${useBasic ? 'getBasicInfo' : 'getInfo'} + GUEST`;
+                console.log(`[INNERTUBE] Trying ${label} for: ${videoId}`);
+                const info = useBasic 
+                    ? await ytGuest.getBasicInfo(videoId, clientType)
+                    : await ytGuest.getInfo(videoId, clientType);
+                if (info && info.streaming_data) {
+                    const result = extractFromStreamingData(info.streaming_data, ytGuest, label);
+                    if (result) return result;
+                }
+            } catch (e) {
+                console.log(`[INNERTUBE] ${clientType} GUEST failed: ${e.message}`);
+            }
+        }
+        return null;
+    };
+
     // Phase 1: Try getInfo with each client type
     for (const clientType of clientTypes) {
-        try {
-            console.log(`[INNERTUBE] Trying getInfo(${clientType}) for: ${videoId}`);
-            const info = await yt.getInfo(videoId, clientType);
-
-            if (!info || !info.streaming_data) {
-                console.log(`[INNERTUBE] No streaming data from ${clientType} (getInfo)`);
-                continue;
-            }
-
-            const result = extractFromStreamingData(info.streaming_data, `${clientType}/getInfo`);
-            if (result) return result;
-
-            console.log(`[INNERTUBE] ${clientType}/getInfo: formats found but all URLs are ciphered/inaccessible`);
-        } catch (e) {
-            console.log(`[INNERTUBE] ${clientType}/getInfo failed: ${e.message}`);
-        }
+        const url = await tryClient(clientType, false);
+        if (url) return url;
     }
 
-    // Phase 2: Try getBasicInfo (lighter request, sometimes works when getInfo doesn't)
+    // Phase 2: Try getBasicInfo fallback
     for (const clientType of ['TV_EMBEDDED', 'WEB_EMBEDDED', 'ANDROID', 'IOS']) {
-        try {
-            console.log(`[INNERTUBE] Trying getBasicInfo(${clientType}) for: ${videoId}`);
-            const info = await yt.getBasicInfo(videoId, clientType);
-
-            if (!info || !info.streaming_data) {
-                console.log(`[INNERTUBE] No streaming data from ${clientType} (getBasicInfo)`);
-                continue;
-            }
-
-            const result = extractFromStreamingData(info.streaming_data, `${clientType}/getBasicInfo`);
-            if (result) return result;
-        } catch (e) {
-            console.log(`[INNERTUBE] ${clientType}/getBasicInfo failed: ${e.message}`);
-        }
+        const url = await tryClient(clientType, true);
+        if (url) return url;
     }
 
     console.log('[INNERTUBE] All client types exhausted');

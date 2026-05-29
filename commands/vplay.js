@@ -528,7 +528,7 @@ async function fetchCobaltVideo(videoUrl) {
             const instances2 = await fetchJSON("https://cobalt.directory/api/instances.json", 5000);
             if (instances2 && Array.isArray(instances2)) {
                 const extra = instances2
-                    .filter(i => i.protocol === "https" && i.api && i.score > 50)
+                    .filter(i => i.api && i.api_online !== false)
                     .map(i => i.api);
                 cobaltEndpoints = [...new Set([...cobaltEndpoints, ...extra])];
             }
@@ -615,70 +615,96 @@ async function fetchFallbackVideo(videoUrl) {
         console.log(`[VPLAY INNERTUBE] No cookies available - may be blocked on datacenter IPs`);
     }
 
-    // Try youtubei.js with multiple client types including smart TV
+    // Try youtubei.js with multiple client types, rotating both authenticated and guest sessions
     const clientTypes = ['TV_EMBEDDED', 'TV', 'WEB', 'ANDROID', 'IOS', 'YTMUSIC', 'WEB_EMBEDDED'];
-    let yt;
+    let ytAuth, ytGuest;
     try {
         const { Innertube } = await import('youtubei.js');
         const createOpts = { retrieve_player: true, generate_session_locally: true };
-        if (cookieString) {
-            createOpts.cookie = cookieString;
+        
+        try {
+            ytGuest = await Innertube.create(createOpts);
+            console.log('[VPLAY INNERTUBE] Guest instance initialized successfully');
+        } catch (e) {
+            console.log(`[VPLAY INNERTUBE] Guest instance creation failed: ${e.message}`);
         }
-        yt = await Innertube.create(createOpts);
+
+        if (cookieString) {
+            try {
+                const authOpts = { ...createOpts, cookie: cookieString };
+                ytAuth = await Innertube.create(authOpts);
+                console.log('[VPLAY INNERTUBE] Auth instance initialized with cookies');
+            } catch (e) {
+                console.log(`[VPLAY INNERTUBE] Auth instance creation failed: ${e.message}`);
+            }
+        }
     } catch (err) {
-        console.log(`[VPLAY INNERTUBE] Failed to create Innertube instance: ${err.message}`);
+        console.log(`[VPLAY INNERTUBE] Failed to load InnerTube library: ${err.message}`);
     }
 
-    if (yt) {
-        for (const clientType of clientTypes) {
+    const extractStreamFromInfo = (info, ytInstance) => {
+        if (!info || !info.streaming_data) return null;
+
+        const getFormatUrl = (format) => {
+            if (format.url) return format.url;
             try {
-                console.log(`[VPLAY INNERTUBE] Trying youtubei.js (${clientType} client) for video: ${videoId}`);
-                const info = await yt.getInfo(videoId, clientType);
-
-                if (!info || !info.streaming_data) {
-                    console.log(`[VPLAY INNERTUBE] No streaming data from ${clientType}`);
-                    continue;
+                if (typeof format.decipher === 'function') {
+                    return format.decipher(ytInstance.session.player);
                 }
+            } catch (e) { /* skip */ }
+            return null;
+        };
 
-                const getFormatUrl = (format) => {
-                    if (format.url) return format.url;
-                    try {
-                        if (typeof format.decipher === 'function') {
-                            return format.decipher(yt.session.player);
-                        }
-                    } catch (e) { /* skip */ }
-                    return null;
-                };
+        // Try combined formats first (video+audio in one stream)
+        const combined = info.streaming_data.formats || [];
+        const mp4Combined = combined
+            .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
+            .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
+        for (const fmt of mp4Combined) {
+            const url = getFormatUrl(fmt);
+            if (url) {
+                console.log(`[VPLAY INNERTUBE] SUCCESS! Combined: ${fmt.quality_label || fmt.height + 'p'}`);
+                return url;
+            }
+        }
 
-                // Try combined formats first (video+audio in one stream)
-                const combined = info.streaming_data.formats || [];
-                const mp4Combined = combined
-                    .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
-                    .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
-                for (const fmt of mp4Combined) {
-                    const url = getFormatUrl(fmt);
-                    if (url) {
-                        console.log(`[VPLAY INNERTUBE] SUCCESS via ${clientType}! Combined: ${fmt.quality_label || fmt.height + 'p'}`);
-                        return url;
-                    }
-                }
+        // Try adaptive video formats
+        const adaptive = info.streaming_data.adaptive_formats || [];
+        const videoFormats = adaptive
+            .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
+            .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
+        for (const fmt of videoFormats) {
+            const url = getFormatUrl(fmt);
+            if (url) {
+                console.log(`[VPLAY INNERTUBE] SUCCESS! Adaptive: ${fmt.quality_label || fmt.height + 'p'}`);
+                return url;
+            }
+        }
 
-                // Try adaptive video formats
-                const adaptive = info.streaming_data.adaptive_formats || [];
-                const videoFormats = adaptive
-                    .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
-                    .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
-                for (const fmt of videoFormats) {
-                    const url = getFormatUrl(fmt);
-                    if (url) {
-                        console.log(`[VPLAY INNERTUBE] SUCCESS via ${clientType}! Adaptive: ${fmt.quality_label || fmt.height + 'p'}`);
-                        return url;
-                    }
-                }
+        return null;
+    };
 
-                console.log(`[VPLAY INNERTUBE] ${clientType}: formats found but URLs inaccessible`);
+    for (const clientType of clientTypes) {
+        if (ytAuth) {
+            try {
+                console.log(`[VPLAY INNERTUBE] Trying youtubei.js (${clientType} client + AUTH) for video: ${videoId}`);
+                const info = await ytAuth.getInfo(videoId, clientType);
+                const url = extractStreamFromInfo(info, ytAuth);
+                if (url) return url;
+                console.log(`[VPLAY INNERTUBE] No streaming data from ${clientType} (AUTH)`);
             } catch (e) {
-                console.log(`[VPLAY INNERTUBE] ${clientType} failed: ${e.message}`);
+                console.log(`[VPLAY INNERTUBE] ${clientType} + AUTH failed: ${e.message}`);
+            }
+        }
+        if (ytGuest) {
+            try {
+                console.log(`[VPLAY INNERTUBE] Trying youtubei.js (${clientType} client + GUEST) for video: ${videoId}`);
+                const info = await ytGuest.getInfo(videoId, clientType);
+                const url = extractStreamFromInfo(info, ytGuest);
+                if (url) return url;
+                console.log(`[VPLAY INNERTUBE] No streaming data from ${clientType} (GUEST)`);
+            } catch (e) {
+                console.log(`[VPLAY INNERTUBE] ${clientType} + GUEST failed: ${e.message}`);
             }
         }
     }
