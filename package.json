@@ -31,7 +31,7 @@
     "shoukaku": "^4.3.0",
     "sodium-native": "^4.0.0",
     "spotify-url-info": "^3.2.16",
-    "undici": "^8.3.0",
+    "undici": "^6.26.0",
     "youtube-sr": "^4.3.11",
     "youtubei.js": "latest",
     "ytdl-core": "^4.11.5"
