@@ -305,9 +305,10 @@ const https = require("https");
 const http = require("http");
 
 /**
- * @description Verifies if a stream URL is responsive and returns valid data
+ * @description Verifies if a stream URL is responsive and returns valid data, following up to 5 redirects
  */
-function verifyStreamUrl(urlStr, timeoutMs = 2000) {
+function verifyStreamUrl(urlStr, timeoutMs = 2500, redirectCount = 0) {
+    if (redirectCount > 5) return Promise.resolve(false);
     return new Promise((resolve) => {
         try {
             const parsed = new URL(urlStr);
@@ -324,6 +325,16 @@ function verifyStreamUrl(urlStr, timeoutMs = 2000) {
                 timeout: timeoutMs
             }, (res) => {
                 res.resume();
+                // Handle HTTP redirects (3xx)
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    let nextUrl = res.headers.location;
+                    if (!nextUrl.startsWith("http")) {
+                        nextUrl = new URL(nextUrl, parsed.origin).href;
+                    }
+                    verifyStreamUrl(nextUrl, timeoutMs, redirectCount + 1).then(resolve);
+                    return;
+                }
+                
                 if (res.statusCode >= 200 && res.statusCode < 300) {
                     resolve(true);
                 } else if (res.statusCode === 206) {
