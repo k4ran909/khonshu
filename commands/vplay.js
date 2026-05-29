@@ -318,14 +318,26 @@ const V_CACHE_TTL = 3600000;
 
 async function getActivePipedInstances() {
     if (_vCachedPiped && Date.now() - _vCacheTime < V_CACHE_TTL) return _vCachedPiped;
+    const fallbacks = [
+        "https://pipedapi.kavin.rocks",
+        "https://api.piped.private.coffee",
+        "https://pipedapi.lvk.li",
+        "https://pipedapi.tokyo.privacy.coffee",
+        "https://pipedapi.us.privacy.coffee",
+        "https://pipedapi.ch.privacy.coffee",
+        "https://piped-api.garudalinux.org",
+        "https://api.piped.projectsegfau.lt",
+        "https://piped-api.lunar.icu"
+    ];
     try {
         console.log("[VPLAY FALLBACK] Fetching active Piped instances from registry...");
         const instances = await fetchJSON("https://piped-instances.kavin.rocks/", 8000);
         if (instances && Array.isArray(instances) && instances.length > 0) {
-            _vCachedPiped = instances
+            const parsed = instances
                 .filter(i => i.api_url && i.uptime_24h > 90)
                 .sort((a, b) => (b.uptime_24h || 0) - (a.uptime_24h || 0))
                 .map(i => i.api_url);
+            _vCachedPiped = parsed.length >= 3 ? parsed : [...new Set([...parsed, ...fallbacks])];
             _vCacheTime = Date.now();
             console.log(`[VPLAY FALLBACK] Found ${_vCachedPiped.length} active Piped instances`);
             return _vCachedPiped;
@@ -333,22 +345,35 @@ async function getActivePipedInstances() {
     } catch (e) {
         console.log(`[VPLAY FALLBACK] Failed to fetch Piped registry: ${e.message}`);
     }
-    return ["https://api.piped.private.coffee"];
+    _vCachedPiped = fallbacks;
+    _vCacheTime = Date.now();
+    return _vCachedPiped;
 }
 
 async function getActiveInvidiousInstances() {
     if (_vCachedInvidious && Date.now() - _vCacheTime < V_CACHE_TTL) return _vCachedInvidious;
+    const fallbacks = [
+        "https://inv.thepixora.com",
+        "https://yewtu.be",
+        "https://invidious.projectsegfau.lt",
+        "https://invidious.flokinet.to",
+        "https://invidious.privacydev.net",
+        "https://iv.melmac.space",
+        "https://invidious.lunar.icu",
+        "https://inv.tux.im"
+    ];
     try {
         console.log("[VPLAY FALLBACK] Fetching active Invidious instances from registry...");
         const instances = await fetchJSON("https://api.invidious.io/instances.json?sort_by=type,health", 8000);
         if (instances && Array.isArray(instances) && instances.length > 0) {
-            _vCachedInvidious = instances
+            const parsed = instances
                 .filter(([name, info]) => info && info.type === "https" && info.api !== false
                     && info.monitor && info.monitor.down === false)
                 .sort(([, a], [, b]) => ((b.monitor?.uptime || 0) - (a.monitor?.uptime || 0)))
                 .map(([name, info]) => info.uri)
                 .slice(0, 8);
-            if (_vCachedInvidious.length > 0) {
+            if (parsed.length > 0) {
+                _vCachedInvidious = parsed.length >= 3 ? parsed : [...new Set([...parsed, ...fallbacks])];
                 console.log(`[VPLAY FALLBACK] Found ${_vCachedInvidious.length} active Invidious instances (API enabled)`);
                 return _vCachedInvidious;
             }
@@ -356,7 +381,8 @@ async function getActiveInvidiousInstances() {
     } catch (e) {
         console.log(`[VPLAY FALLBACK] Failed to fetch Invidious registry: ${e.message}`);
     }
-    return [];
+    _vCachedInvidious = fallbacks;
+    return _vCachedInvidious;
 }
 
 async function fetchFallbackVideo(videoUrl) {
