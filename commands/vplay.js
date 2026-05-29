@@ -630,22 +630,37 @@ async function fetchFallbackVideo(videoUrl) {
             const data = await fetchJSON(`${instance}/streams/${videoId}`, 4000);
             if (data && data.videoStreams && data.videoStreams.length > 0) {
                 const mp4Streams = data.videoStreams
-                    .filter(s => s.url && s.format === "MPEG_4")
+                    .filter(s => s.url && ((s.mimeType && s.mimeType.includes("video/mp4")) || s.format === "MPEG_4" || s.format === "MP4"))
                     .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
                 if (mp4Streams.length > 0) {
                     let streamUrl = mp4Streams[0].url;
+                    let finalUrl = streamUrl;
                     if (streamUrl.includes("googlevideo.com") || streamUrl.includes("youtube.com")) {
-                        const proxyUrl = `${instance}/proxy?host=${new URL(streamUrl).hostname}&path=${encodeURIComponent(new URL(streamUrl).pathname + new URL(streamUrl).search)}`;
-                        console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${mp4Streams[0].quality} (proxied)`);
-                        return proxyUrl;
+                        finalUrl = `${instance}/proxy?host=${new URL(streamUrl).hostname}&path=${encodeURIComponent(new URL(streamUrl).pathname + new URL(streamUrl).search)}`;
                     }
-                    console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${mp4Streams[0].quality}`);
-                    return streamUrl;
+                    console.log(`[VPLAY FALLBACK] Piped checking stream: ${finalUrl}`);
+                    const ok = await verifyStreamUrl(finalUrl, 2000);
+                    if (ok) {
+                        console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${mp4Streams[0].quality} (proxied)`);
+                        return finalUrl;
+                    } else {
+                        console.log(`[VPLAY FALLBACK] Piped stream check failed for: ${instance}`);
+                    }
                 }
                 const anyStream = data.videoStreams.filter(s => s.url)[0];
                 if (anyStream) {
-                    console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${anyStream.quality}`);
-                    return anyStream.url;
+                    let finalUrl = anyStream.url;
+                    if (finalUrl.includes("googlevideo.com") || finalUrl.includes("youtube.com")) {
+                        finalUrl = `${instance}/proxy?host=${new URL(finalUrl).hostname}&path=${encodeURIComponent(new URL(finalUrl).pathname + new URL(finalUrl).search)}`;
+                    }
+                    console.log(`[VPLAY FALLBACK] Piped checking stream: ${finalUrl}`);
+                    const ok = await verifyStreamUrl(finalUrl, 2000);
+                    if (ok) {
+                        console.log(`[VPLAY FALLBACK] Piped SUCCESS from ${instance}! Video: ${anyStream.quality}`);
+                        return finalUrl;
+                    } else {
+                        console.log(`[VPLAY FALLBACK] Piped stream check failed for: ${instance}`);
+                    }
                 }
             }
         } catch (e) {}
@@ -669,10 +684,15 @@ async function fetchFallbackVideo(videoUrl) {
                     const itag = mp4Streams[0].itag;
                     if (itag) {
                         const proxyUrl = `${instance}/latest_version?id=${videoId}&itag=${itag}&local=true`;
-                        console.log(`[VPLAY FALLBACK] Invidious SUCCESS from ${instance}! Video: ${mp4Streams[0].qualityLabel} (via /latest_version)`);
-                        return proxyUrl;
+                        console.log(`[VPLAY FALLBACK] Invidious checking stream: ${proxyUrl}`);
+                        const ok = await verifyStreamUrl(proxyUrl, 2000);
+                        if (ok) {
+                            console.log(`[VPLAY FALLBACK] Invidious SUCCESS from ${instance}! Video: ${mp4Streams[0].qualityLabel} (via /latest_version)`);
+                            return proxyUrl;
+                        } else {
+                            console.log(`[VPLAY FALLBACK] Invidious stream check failed for: ${instance}`);
+                        }
                     }
-                    return mp4Streams[0].url;
                 }
             }
         } catch (e) {}
