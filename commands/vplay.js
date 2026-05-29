@@ -467,8 +467,16 @@ async function fetchFallbackVideo(videoUrl) {
                     .filter(s => s.url && s.format === "MPEG_4")
                     .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
                 if (mp4Streams.length > 0) {
+                    let streamUrl = mp4Streams[0].url;
+                    // Piped streams are already proxied through the instance, but verify
+                    if (streamUrl.includes("googlevideo.com") || streamUrl.includes("youtube.com")) {
+                        // Rewrite to proxy through the Piped instance
+                        const proxyUrl = `${instance}/proxy?host=${new URL(streamUrl).hostname}&path=${encodeURIComponent(new URL(streamUrl).pathname + new URL(streamUrl).search)}`;
+                        console.log(`[VPLAY FALLBACK] Piped SUCCESS! Video: ${mp4Streams[0].quality} (proxied)`);
+                        return proxyUrl;
+                    }
                     console.log(`[VPLAY FALLBACK] Piped SUCCESS! Video: ${mp4Streams[0].quality}`);
-                    return mp4Streams[0].url;
+                    return streamUrl;
                 }
                 const anyStream = data.videoStreams.filter(s => s.url)[0];
                 if (anyStream) {
@@ -486,14 +494,31 @@ async function fetchFallbackVideo(videoUrl) {
     for (const instance of invidiousInstances.slice(0, 5)) {
         try {
             console.log(`[VPLAY FALLBACK] Trying Invidious: ${instance}/api/v1/videos/${videoId}`);
-            const data = await fetchJSON(`${instance}/api/v1/videos/${videoId}`, 10000);
+            // Use local=true to get proxied URLs through the Invidious instance
+            const data = await fetchJSON(`${instance}/api/v1/videos/${videoId}?local=true`, 10000);
             if (data && data.formatStreams && data.formatStreams.length > 0) {
                 const mp4Streams = data.formatStreams
                     .filter(f => f.url && f.type && f.type.includes("video/mp4"))
                     .sort((a, b) => Math.abs(parseInt(a.qualityLabel || "0") - 360) - Math.abs(parseInt(b.qualityLabel || "0") - 360));
                 if (mp4Streams.length > 0) {
-                    console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel}`);
-                    return mp4Streams[0].url;
+                    let streamUrl = mp4Streams[0].url;
+                    // Double-check: rewrite any remaining googlevideo.com URLs to proxy through instance
+                    if (streamUrl.includes("googlevideo.com")) {
+                        try {
+                            const parsed = new URL(streamUrl);
+                            const instanceHost = new URL(instance).host;
+                            parsed.hostname = instanceHost;
+                            parsed.protocol = "https:";
+                            parsed.port = "";
+                            streamUrl = parsed.toString();
+                            console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel} (proxied through ${instanceHost})`);
+                        } catch (e) {
+                            console.log(`[VPLAY FALLBACK] Invidious URL rewrite failed, using raw URL`);
+                        }
+                    } else {
+                        console.log(`[VPLAY FALLBACK] Invidious SUCCESS! Video: ${mp4Streams[0].qualityLabel}`);
+                    }
+                    return streamUrl;
                 }
             }
             if (data && data.error) console.log(`[VPLAY FALLBACK] Invidious ${instance} error: ${data.error}`);
