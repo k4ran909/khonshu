@@ -193,6 +193,7 @@ module.exports.run = async (client, message, args) => {
         songs: [{ title: title, url: youtubeUrl, requestedby: message.author.username }],
         volume: 1,
         playing: true,
+        loop: false,
         isVideo: true,
         streamer: streamer,
         streamPlay: null,
@@ -218,55 +219,76 @@ module.exports.run = async (client, message, args) => {
         await streamer.joinVoice(voiceChannel.guild.id, voiceChannel.id);
         
         client.off('raw', rawListener);
-        
-        // Transcode and prepare the combined stream via ffmpeg
-        utils.log(`[VPLAY] Preparing video transcode stream from URL: ${directUrl.substring(0, 200)}...`);
-        const { command, output, promise } = prepareStream(directUrl, {
-            videoCodec: "H264",
-            width: useCamera ? 640 : 1280,   // 360p for webcam square, 720p for screenshare!
-            height: useCamera ? 360 : 720,
-            bitrateVideo: useCamera ? 600 : 2000, // lower bitrate for webcam
-            bitrateVideoMax: useCamera ? 1000 : 3000,
-            bitrateAudio: 128,
-            includeAudio: true,
-            h26xPreset: "ultrafast",        // Use ultrafast for minimum CPU overhead!
-            minimizeLatency: true,
-            customFfmpegFlags: ["-loglevel", "warning"]
-        });
 
-        command.on("stderr", (line) => {
-            utils.log(`[VPLAY FFMPEG STDERR] ${line}`);
-        });
-
-        // Store play objects in queue construct
-        queueConstruct.streamPlay = {
-            command: command,
-            promise: promise
-        };
-
-        command.on("error", (err) => {
-            if (err.message && (err.message.includes("SIGKILL") || err.message.includes("kill"))) return;
-            utils.log(`[VPLAY FFMPEG ERROR] ${err.message}`);
-            try { message.channel.send(`❌ Video transcode error: ${err.message}`); } catch (e) {}
-        });
-
-        promise.then(() => {
-            utils.log("[VPLAY] Video stream playback finished.");
+        async function startStreaming() {
             const currentQueue = queue.get("queue");
-            if (currentQueue && currentQueue.isVideo) {
-                try { streamer.leaveVoice(); } catch (e) {}
-                queue.delete("queue");
-                try { message.channel.send("📺 Video streaming has finished."); } catch (e) {}
-            }
-        }).catch((err) => {
-            utils.log(`[VPLAY PROMISE ERROR] ${err.message}`);
-        });
+            if (!currentQueue || !currentQueue.playing) return;
 
-        // Start playing Go Live or Camera stream to Discord
-        await playStream(output, streamer, {
-            type: useCamera ? "camera" : "go-live",
-            streamPreview: false
-        });
+            utils.log(`[VPLAY] Preparing video transcode stream from URL: ${directUrl.substring(0, 200)}...`);
+            const { command, output, promise } = prepareStream(directUrl, {
+                videoCodec: "H264",
+                width: useCamera ? 640 : 1280,   // 360p for webcam square, 720p for screenshare!
+                height: useCamera ? 360 : 720,
+                bitrateVideo: useCamera ? 600 : 2000, // lower bitrate for webcam
+                bitrateVideoMax: useCamera ? 1000 : 3000,
+                bitrateAudio: 128,
+                includeAudio: true,
+                h26xPreset: "ultrafast",        // Use ultrafast for minimum CPU overhead!
+                minimizeLatency: true,
+                customFfmpegFlags: ["-loglevel", "warning"]
+            });
+
+            command.on("stderr", (line) => {
+                utils.log(`[VPLAY FFMPEG STDERR] ${line}`);
+            });
+
+            currentQueue.streamPlay = {
+                command: command,
+                promise: promise
+            };
+
+            command.on("error", (err) => {
+                if (err.message && (err.message.includes("SIGKILL") || err.message.includes("kill"))) return;
+                utils.log(`[VPLAY FFMPEG ERROR] ${err.message}`);
+                const checkQueue = queue.get("queue");
+                if (checkQueue && !checkQueue.loop) {
+                    try { message.channel.send(`❌ Video transcode error: ${err.message}`); } catch (e) {}
+                }
+            });
+
+            promise.then(async () => {
+                utils.log("[VPLAY] Video stream playback finished.");
+                const checkQueue = queue.get("queue");
+                if (checkQueue && checkQueue.isVideo) {
+                    if (checkQueue.loop) {
+                        utils.log(`[VPLAY] Looping enabled, restarting stream for: ${title}`);
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        startStreaming();
+                    } else {
+                        try { streamer.leaveVoice(); } catch (e) {}
+                        queue.delete("queue");
+                        try { message.channel.send("📺 Video streaming has finished."); } catch (e) {}
+                    }
+                }
+            }).catch(async (err) => {
+                utils.log(`[VPLAY PROMISE ERROR] ${err.message}`);
+                const checkQueue = queue.get("queue");
+                if (checkQueue && checkQueue.isVideo && checkQueue.loop) {
+                    utils.log("[VPLAY] Error during playback but looping enabled. Retrying in 2 seconds...");
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    startStreaming();
+                }
+            });
+
+            // Start playing Go Live or Camera stream to Discord
+            await playStream(output, streamer, {
+                type: useCamera ? "camera" : "go-live",
+                streamPreview: false
+            });
+        }
+
+        // Start playing the video stream!
+        await startStreaming();
 
         await message.channel.send(`${useCamera ? "📷 Started streaming video as a Virtual Camera" : "📺 Started screensharing video"}: **${title}**`);
         utils.log(`[VPLAY] Successfully started streaming "${title}" via ${useCamera ? "camera" : "go-live"}`);
@@ -281,6 +303,43 @@ module.exports.run = async (client, message, args) => {
 
 const https = require("https");
 const http = require("http");
+
+/**
+ * @description Verifies if a stream URL is responsive and returns valid data
+ */
+function verifyStreamUrl(urlStr, timeoutMs = 2000) {
+    return new Promise((resolve) => {
+        try {
+            const parsed = new URL(urlStr);
+            const transport = parsed.protocol === "http:" ? http : https;
+            const req = transport.request({
+                method: "GET",
+                hostname: parsed.hostname,
+                port: parsed.port || undefined,
+                path: parsed.pathname + parsed.search,
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Range": "bytes=0-1024"
+                },
+                timeout: timeoutMs
+            }, (res) => {
+                res.resume();
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    resolve(true);
+                } else if (res.statusCode === 206) {
+                    resolve(true);
+                } else {
+                    resolve(false);
+                }
+            });
+            req.on("error", () => resolve(false));
+            req.on("timeout", () => { req.destroy(); resolve(false); });
+            req.end();
+        } catch (e) {
+            resolve(false);
+        }
+    });
+}
 
 function extractVideoId(url) {
     const patterns = [
