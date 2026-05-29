@@ -83,44 +83,53 @@ module.exports.run = async (client, message, args) => {
         title = "OBS Virtual Camera Feed";
         utils.log(`[VPLAY] Using DirectShow device: "${directUrl}"`);
     } else {
-        // Resolve YouTube URL if a search query was provided
-        if (!YT_URL_REGEX.test(query)) {
-            utils.log(`[VPLAY] Searching YouTube for: "${query}"`);
-            try {
-                const results = await YouTube.search(query, { limit: 1 });
-                if (!results || results.length === 0) {
-                    return message.channel.send("❌ No matches found for your query.");
+        const HTTP_URL_REGEX = /^https?:\/\/.+$/;
+        const isDirectVideo = HTTP_URL_REGEX.test(query) && !YT_URL_REGEX.test(query);
+
+        if (isDirectVideo) {
+            directUrl = query;
+            title = "Direct Video Stream";
+            utils.log(`[VPLAY] Using direct video URL: "${directUrl}"`);
+        } else {
+            // Resolve YouTube URL if a search query was provided
+            if (!YT_URL_REGEX.test(query)) {
+                utils.log(`[VPLAY] Searching YouTube for: "${query}"`);
+                try {
+                    const results = await YouTube.search(query, { limit: 1 });
+                    if (!results || results.length === 0) {
+                        return message.channel.send("❌ No matches found for your query.");
+                    }
+                    youtubeUrl = `https://www.youtube.com/watch?v=${results[0].id}`;
+                } catch (e) {
+                    console.error("[VPLAY] YouTube search error:", e);
+                    return message.channel.send("❌ Error searching YouTube.");
                 }
-                youtubeUrl = `https://www.youtube.com/watch?v=${results[0].id}`;
+            }
+
+            // Resolve video metadata
+            title = "Unknown Video";
+            try {
+                const video = await YouTube.getVideo(youtubeUrl);
+                if (video) {
+                    title = video.title;
+                } else {
+                    const results = await YouTube.search(youtubeUrl, { limit: 1 });
+                    if (results && results.length > 0) title = results[0].title;
+                }
             } catch (e) {
-                console.error("[VPLAY] YouTube search error:", e);
-                return message.channel.send("❌ Error searching YouTube.");
+                title = "YouTube Video Stream";
             }
-        }
 
-        // Resolve video metadata
-        title = "Unknown Video";
-        try {
-            const video = await YouTube.getVideo(youtubeUrl);
-            if (video) {
-                title = video.title;
-            } else {
-                const results = await YouTube.search(youtubeUrl, { limit: 1 });
-                if (results && results.length > 0) title = results[0].title;
+            utils.log(`[VPLAY] Resolved video: "${title}" at ${youtubeUrl}`);
+
+            // Resolve direct stream URL using yt-dlp
+            try {
+                directUrl = await getDirectVideoUrl(youtubeUrl);
+                if (!directUrl) throw new Error("No URL returned from yt-dlp");
+            } catch (err) {
+                console.error("[VPLAY] Error extracting direct video stream URL:", err);
+                return message.channel.send("❌ Failed to extract direct video stream URL from YouTube. Ensure yt-dlp is updated.");
             }
-        } catch (e) {
-            title = "YouTube Video Stream";
-        }
-
-        utils.log(`[VPLAY] Resolved video: "${title}" at ${youtubeUrl}`);
-
-        // Resolve direct stream URL using yt-dlp
-        try {
-            directUrl = await getDirectVideoUrl(youtubeUrl);
-            if (!directUrl) throw new Error("No URL returned from yt-dlp");
-        } catch (err) {
-            console.error("[VPLAY] Error extracting direct video stream URL:", err);
-            return message.channel.send("❌ Failed to extract direct video stream URL from YouTube. Ensure yt-dlp is updated.");
         }
     }
 
