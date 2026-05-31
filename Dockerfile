@@ -13,7 +13,10 @@ RUN apk add --no-cache \
     make \
     g++ \
     gcc \
-    musl-dev
+    musl-dev \
+    libtool \
+    autoconf \
+    automake
 
 # Copy dependency files first (for Docker layer caching)
 COPY package.json package-lock.json patch-stream.js ./
