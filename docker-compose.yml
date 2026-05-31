@@ -26,6 +26,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./application.yml:/opt/Lavalink/application.yml
+    environment:
       - TZ=UTC
       - HTTPCONFIG_PROXYHOST=khonshu-warp
       - HTTPCONFIG_PROXYPORT=1080
