@@ -26,10 +26,13 @@ services:
     restart: unless-stopped
     volumes:
       - ./application.yml:/opt/Lavalink/application.yml
-    environment:
       - TZ=UTC
       - HTTPCONFIG_PROXYHOST=khonshu-warp
       - HTTPCONFIG_PROXYPORT=1080
+      - PLUGINS_YOUTUBE_HTTPCONFIG_PROXYHOST=khonshu-warp
+      - PLUGINS_YOUTUBE_HTTPCONFIG_PROXYPORT=1080
+      - LAVALINK_SERVER_SOURCES_HTTP_PROXYHOST=khonshu-warp
+      - LAVALINK_SERVER_SOURCES_HTTP_PROXYPORT=1080
 
   warp:
     image: caomingjun/warp:latest
