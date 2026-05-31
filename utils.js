@@ -215,11 +215,11 @@ async function fetchYouTubeJSAudio(videoUrl) {
     }
 
     // Helper to get URL from a format (handles both direct and ciphered)
-    const getFormatUrl = (format, ytInstance) => {
+    const getFormatUrl = async (format, ytInstance) => {
         if (format.url) return format.url;
         try {
             if (typeof format.decipher === 'function') {
-                return format.decipher(ytInstance.session.player);
+                return await format.decipher(ytInstance.session.player);
             }
         } catch (e) {
             console.log(`[INNERTUBE] Decipher failed for format: ${e.message}`);
@@ -228,7 +228,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
     };
 
     // Helper to extract audio URL from streaming data
-    const extractFromStreamingData = (streamingData, ytInstance, label) => {
+    const extractFromStreamingData = async (streamingData, ytInstance, label) => {
         if (!streamingData) return null;
         const adaptive = streamingData.adaptive_formats || [];
         const combined = streamingData.formats || [];
@@ -240,7 +240,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
             .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
         for (const fmt of audioFormats) {
-            const url = getFormatUrl(fmt, ytInstance);
+            const url = await getFormatUrl(fmt, ytInstance);
             if (url) {
                 console.log(`[INNERTUBE] SUCCESS! Got audio via ${label}: ${fmt.mime_type} (${fmt.bitrate}bps)`);
                 return url;
@@ -249,7 +249,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
 
         // Try combined formats (video+audio) as fallback
         for (const fmt of combined) {
-            const url = getFormatUrl(fmt, ytInstance);
+            const url = await getFormatUrl(fmt, ytInstance);
             if (url) {
                 console.log(`[INNERTUBE] SUCCESS! Got combined format via ${label}: ${fmt.mime_type}`);
                 return url;
@@ -268,7 +268,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
                     ? await ytAuth.getBasicInfo(videoId, clientType)
                     : await ytAuth.getInfo(videoId, clientType);
                 if (info && info.streaming_data) {
-                    const result = extractFromStreamingData(info.streaming_data, ytAuth, label);
+                    const result = await extractFromStreamingData(info.streaming_data, ytAuth, label);
                     if (result) return result;
                 }
             } catch (e) {
@@ -283,7 +283,7 @@ async function fetchYouTubeJSAudio(videoUrl) {
                     ? await ytGuest.getBasicInfo(videoId, clientType)
                     : await ytGuest.getInfo(videoId, clientType);
                 if (info && info.streaming_data) {
-                    const result = extractFromStreamingData(info.streaming_data, ytGuest, label);
+                    const result = await extractFromStreamingData(info.streaming_data, ytGuest, label);
                     if (result) return result;
                 }
             } catch (e) {

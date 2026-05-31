@@ -8,12 +8,12 @@ try {
 // Setup global undici proxy if HTTP_PROXY is defined in environment (Node 20+ fetch support)
 if (process.env.HTTP_PROXY) {
   try {
-    const { setGlobalDispatcher, ProxyAgent } = require("undici");
-    const proxyAgent = new ProxyAgent(process.env.HTTP_PROXY);
+    const { setGlobalDispatcher, EnvHttpProxyAgent } = require("undici");
+    const proxyAgent = new EnvHttpProxyAgent();
     setGlobalDispatcher(proxyAgent);
-    console.log(`[INIT] Globally configured undici ProxyAgent for HTTP_PROXY: ${process.env.HTTP_PROXY}`);
+    console.log(`[INIT] Globally configured undici EnvHttpProxyAgent with HTTP_PROXY: ${process.env.HTTP_PROXY}`);
   } catch (e) {
-    console.error("[INIT] Failed to configure global undici ProxyAgent:", e);
+    console.error("[INIT] Failed to configure global undici EnvHttpProxyAgent:", e);
   }
 }
 
@@ -53,10 +53,13 @@ if (process.env.YOUTUBE_COOKIES) {
         // Not valid base64, use raw content
       }
     }
+    // Sanitize cookies: only allow standard printable ASCII, tab, carriage return, and newline
+    cookiesContent = cookiesContent.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "");
+    
     const path = require("path");
     const fs = require("fs");
     fs.writeFileSync(path.join(__dirname, "cookies.txt"), cookiesContent, "utf8");
-    console.log("[INIT] Successfully wrote cookies from YOUTUBE_COOKIES environment variable to cookies.txt");
+    console.log("[INIT] Successfully wrote and sanitized cookies from YOUTUBE_COOKIES environment variable to cookies.txt");
   } catch (e) {
     console.error("[INIT] Failed to write cookies from YOUTUBE_COOKIES:", e);
   }

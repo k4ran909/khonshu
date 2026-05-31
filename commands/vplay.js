@@ -628,14 +628,14 @@ async function fetchFallbackVideo(videoUrl) {
         console.log(`[VPLAY INNERTUBE] Failed to load InnerTube library: ${err.message}`);
     }
 
-    const extractStreamFromInfo = (info, ytInstance) => {
+    const extractStreamFromInfo = async (info, ytInstance) => {
         if (!info || !info.streaming_data) return null;
 
-        const getFormatUrl = (format) => {
+        const getFormatUrl = async (format) => {
             if (format.url) return format.url;
             try {
                 if (typeof format.decipher === 'function') {
-                    return format.decipher(ytInstance.session.player);
+                    return await format.decipher(ytInstance.session.player);
                 }
             } catch (e) { /* skip */ }
             return null;
@@ -647,7 +647,7 @@ async function fetchFallbackVideo(videoUrl) {
             .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
             .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
         for (const fmt of mp4Combined) {
-            const url = getFormatUrl(fmt);
+            const url = await getFormatUrl(fmt);
             if (url) {
                 console.log(`[VPLAY INNERTUBE] SUCCESS! Combined: ${fmt.quality_label || fmt.height + 'p'}`);
                 return url;
@@ -660,7 +660,7 @@ async function fetchFallbackVideo(videoUrl) {
             .filter(f => f.mime_type && f.mime_type.includes('video/mp4'))
             .sort((a, b) => Math.abs((a.height || 0) - 360) - Math.abs((b.height || 0) - 360));
         for (const fmt of videoFormats) {
-            const url = getFormatUrl(fmt);
+            const url = await getFormatUrl(fmt);
             if (url) {
                 console.log(`[VPLAY INNERTUBE] SUCCESS! Adaptive: ${fmt.quality_label || fmt.height + 'p'}`);
                 return url;
@@ -675,7 +675,7 @@ async function fetchFallbackVideo(videoUrl) {
             try {
                 console.log(`[VPLAY INNERTUBE] Trying youtubei.js (${clientType} client + AUTH) for video: ${videoId}`);
                 const info = await ytAuth.getInfo(videoId, clientType);
-                const url = extractStreamFromInfo(info, ytAuth);
+                const url = await extractStreamFromInfo(info, ytAuth);
                 if (url) return url;
                 console.log(`[VPLAY INNERTUBE] No streaming data from ${clientType} (AUTH)`);
             } catch (e) {
@@ -686,7 +686,7 @@ async function fetchFallbackVideo(videoUrl) {
             try {
                 console.log(`[VPLAY INNERTUBE] Trying youtubei.js (${clientType} client + GUEST) for video: ${videoId}`);
                 const info = await ytGuest.getInfo(videoId, clientType);
-                const url = extractStreamFromInfo(info, ytGuest);
+                const url = await extractStreamFromInfo(info, ytGuest);
                 if (url) return url;
                 console.log(`[VPLAY INNERTUBE] No streaming data from ${clientType} (GUEST)`);
             } catch (e) {
