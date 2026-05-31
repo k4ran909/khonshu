@@ -18,10 +18,16 @@ RUN apk add --no-cache \
     autoconf \
     automake
 
-# Copy dependency files first (for Docker layer caching)
-COPY package.json package-lock.json patch-stream.js ./
+# Set ownership of /app to node user
+RUN chown -R node:node /app
 
-# Install node dependencies (triggers postinstall to run patch-stream.js)
+# Switch to the node user
+USER node
+
+# Copy dependency files first with correct ownership
+COPY --chown=node:node package.json package-lock.json patch-stream.js ./
+
+# Install node dependencies
 RUN npm ci --omit=dev
 
 # ─── Final stage ───
