@@ -762,8 +762,12 @@ module.exports = {
             "--get-url",
             "--no-warnings",
             "--no-check-certificates",
-            "--extractor-args", "youtube:player_client=mweb,tv"
+            "--extractor-args", "youtube:player_client=web_embedded,tv_embedded,mweb"
         ];
+        // Route through WARP proxy if available
+        if (process.env.HTTP_PROXY) {
+            ytdlpArgs.push("--proxy", process.env.HTTP_PROXY);
+        }
         if (fs.existsSync(cookiesPath)) {
             ytdlpArgs.push("--cookies", cookiesPath);
         }

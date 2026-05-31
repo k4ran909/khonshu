@@ -52,15 +52,18 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     clients:
+      - TVHTML5EMBEDDED
+      - TV
       - WEB
-      - M_WEB
-      - MUSIC
       - WEBEMBEDDED
       - ANDROID_VR
-      - TV
-      - TVHTML5EMBEDDED
+      - M_WEB
+      - MUSIC
+    httpConfig:
+      proxyHost: "khonshu-warp"
+      proxyPort: 1080
     oauth:
-      enabled: false
+      enabled: true
   lavasrc:
     providers:
       - "ytsearch:\"%ISRC%\""

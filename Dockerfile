@@ -40,7 +40,7 @@ RUN apk add --no-cache \
     ffmpeg \
     python3 \
     py3-pip \
-    && pip3 install --break-system-packages yt-dlp==2025.04.30 \
+    && pip3 install --break-system-packages yt-dlp \
     && rm -rf /root/.cache
 
 # Copy built node_modules from builder
