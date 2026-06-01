@@ -159,7 +159,9 @@ function parseCookieFile() {
             .map(line => {
                 const parts = line.split('\t');
                 if (parts.length >= 7) {
-                    return `${parts[5].trim()}=${parts[6].trim()}`;
+                    const name = parts[5].trim().replace(/[\r\n\t]+/g, '');
+                    const value = parts[6].trim().replace(/[\r\n\t]+/g, '');
+                    return `${name}=${value}`;
                 }
                 return null;
             })
