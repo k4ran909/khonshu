@@ -141,7 +141,7 @@ function init(client) {
         moveOnDisconnect: false,
         resumable: false,
         resumableTimeout: 30,
-        reconnectTries: 3,
+        reconnectTries: 50,
         restTimeout: 15,
         voiceConnectionTimeout: 10
     });
@@ -161,9 +161,10 @@ function init(client) {
     });
 
     shoukaku.on("disconnect", (name, players, moved) => {
-        console.log(`[LAVALINK] Node "${name}" disconnected. Moved: ${moved}`);
+        console.log(`[LAVALINK] Node "${name}" disconnected permanently. Moved: ${moved}. Exiting process to trigger container auto-restart.`);
         nodeConnected = false;
-    });
+        process.exit(1);
+     });
 
     return shoukaku;
 }
