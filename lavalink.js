@@ -197,8 +197,8 @@ async function searchTrack(query) {
     }
 
     try {
-        // If it's a URL, load directly. Otherwise, search YouTube
-        const identifier = query.startsWith("http") ? query : `ytsearch:${query}`;
+        // If it's a URL, load directly. Otherwise, search SoundCloud/YouTube based on configuration
+        const identifier = query.startsWith("http") ? query : `${process.env.SEARCH_ENGINE || "scsearch"}:${query}`;
         console.log(`[LAVALINK] Searching: ${identifier}`);
         
         const result = await node.rest.resolve(identifier);
