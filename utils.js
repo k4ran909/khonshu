@@ -159,8 +159,10 @@ function parseCookieFile() {
             .map(line => {
                 const parts = line.split('\t');
                 if (parts.length >= 7) {
-                    const name = parts[5].trim().replace(/[\r\n\t]+/g, '');
-                    const value = parts[6].trim().replace(/[\r\n\t]+/g, '');
+                    // Strip ALL characters outside valid HTTP header range (printable ASCII + HTAB)
+                    const name = parts[5].replace(/[^\x09\x20-\x7E]/g, '');
+                    const value = parts[6].replace(/[^\x09\x20-\x7E]/g, '');
+                    if (name.length === 0) return null;
                     return `${name}=${value}`;
                 }
                 return null;
