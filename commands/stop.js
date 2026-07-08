@@ -9,7 +9,7 @@ const utils = require("../utils");
  */
 module.exports.run = async (client, message, args) => {
 
-    const serverQueue = queue.get("queue");
+    const serverQueue = global.queue.get("queue");
     if(!serverQueue){return message.channel.send(strings.nothingPlaying);};
 
     utils.log("Stopped playing music");
@@ -21,7 +21,7 @@ module.exports.run = async (client, message, args) => {
     }
 
     // Delete queue FIRST so standard Idle handler or streams won't trigger clean up
-    queue.delete("queue");
+    global.queue.delete("queue");
 
     if (serverQueue.isVideo) {
         utils.log("[STOP] Terminating video screenshare stream and leaving voice.");

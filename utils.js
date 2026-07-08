@@ -64,6 +64,24 @@ async function fetchJSON(urlStr, timeoutMs = 10000) {
     }
 }
 
+/**
+ * @description Safely edit a Discord message to swap `oldTitle` → `newTitle`.
+ *              - No-op on empty `msg.content` (embed-only messages) — the OLD code
+ *                sent an empty content string that blanked the message.
+ *              - No-op if `oldTitle` doesn't appear in the content (nothing to swap).
+ *              - Suppresses all mentions in the edit so a YouTube title of `@everyone`,
+ *                `@here`, or a user mention can't create a real ping.
+ */
+function safeEditTitle(msg, oldTitle, newTitle) {
+    if (!msg || typeof msg.edit !== "function") return;
+    const content = typeof msg.content === "string" ? msg.content : "";
+    if (!content || !oldTitle || !content.includes(oldTitle)) return;
+    const newContent = content.split(oldTitle).join(newTitle || "");
+    try {
+        msg.edit({ content: newContent, allowedMentions: { parse: [] } }).catch(() => {});
+    } catch (_) {}
+}
+
 // ─── Dynamic Instance Discovery ───
 let _cachedPipedInstances = null;
 let _cachedInvidiousInstances = null;
@@ -151,11 +169,16 @@ function parseCookieFile() {
     try {
         const fs = require('fs');
         const path = require('path');
-        const cookiePath = path.join(process.cwd(), 'cookies.txt');
+        const cookiePath = path.join(__dirname, 'cookies.txt');
         if (!fs.existsSync(cookiePath)) return null;
         const content = fs.readFileSync(cookiePath, 'utf8');
         const cookies = content.split('\n')
-            .filter(line => !line.startsWith('#') && line.trim().length > 0)
+            // Netscape cookies.txt exported by browsers marks HttpOnly cookies with a
+            // "#HttpOnly_" prefix — the OLD filter dropped these along with real comment
+            // lines, so auth cookies were silently thrown away and yt-dlp fell back to
+            // anonymous requests on age-gated / members-only videos.
+            .filter(line => !/^\s*#(?!HttpOnly_)/.test(line) && line.trim().length > 0)
+            .map(line => line.replace(/^#HttpOnly_/, ''))
             .map(line => {
                 const parts = line.split('\t');
                 if (parts.length >= 7) {
@@ -238,27 +261,34 @@ async function fetchYouTubeJSAudio(videoUrl) {
         const combined = streamingData.formats || [];
         console.log(`[INNERTUBE] ${label}: adaptive=${adaptive.length}, combined=${combined.length}`);
 
-        // Try adaptive audio formats first
+        // Try adaptive audio formats first — decipher concurrently instead of serially.
+        // The old code awaited each format one at a time; with 10 ciphered formats that
+        // meant 10 sequential roundtrips (~10s+) even though the first success wins.
         const audioFormats = adaptive
             .filter(f => f.mime_type && (f.mime_type.includes('audio/webm') || f.mime_type.includes('audio/mp4')))
             .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
-        for (const fmt of audioFormats) {
-            const url = await getFormatUrl(fmt, ytInstance);
-            if (url) {
-                console.log(`[INNERTUBE] SUCCESS! Got audio via ${label}: ${fmt.mime_type} (${fmt.bitrate}bps)`);
-                return url;
+        const raceForFirstUrl = async (formats, kind) => {
+            if (formats.length === 0) return null;
+            const settled = await Promise.all(formats.map(async (fmt) => {
+                try {
+                    const url = await getFormatUrl(fmt, ytInstance);
+                    return url ? { url, fmt } : null;
+                } catch (_) { return null; }
+            }));
+            for (const s of settled) {
+                if (s && s.url) {
+                    console.log(`[INNERTUBE] SUCCESS! Got ${kind} via ${label}: ${s.fmt.mime_type} (${s.fmt.bitrate}bps)`);
+                    return s.url;
+                }
             }
-        }
+            return null;
+        };
 
-        // Try combined formats (video+audio) as fallback
-        for (const fmt of combined) {
-            const url = await getFormatUrl(fmt, ytInstance);
-            if (url) {
-                console.log(`[INNERTUBE] SUCCESS! Got combined format via ${label}: ${fmt.mime_type}`);
-                return url;
-            }
-        }
+        const audioUrl = await raceForFirstUrl(audioFormats, "audio");
+        if (audioUrl) return audioUrl;
+        const combinedUrl = await raceForFirstUrl(combined, "combined format");
+        if (combinedUrl) return combinedUrl;
         return null;
     };
 
@@ -370,10 +400,16 @@ async function fetchCobaltAudio(videoUrl) {
                 });
 
                 const parsed = new URL(endpoint);
+                // Use the endpoint's actual path (with query string), not "/".
+                // Some Cobalt deployments live behind a prefix like "/api/", which the
+                // old hardcoded "/" silently 404'd on.
+                const requestPath = (parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "/") + (parsed.search || "");
+                let done = false;
+                const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
                 const req = https.request({
                     hostname: parsed.hostname,
                     port: parsed.port || 443,
-                    path: "/",
+                    path: requestPath,
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -388,12 +424,15 @@ async function fetchCobaltAudio(videoUrl) {
                     res.on("end", () => {
                         try {
                             const data = JSON.parse(body);
-                            resolve(data);
-                        } catch (e) { resolve(null); }
+                            safeResolve(data);
+                        } catch (e) { safeResolve(null); }
                     });
+                    // Guard mid-body response errors — previously uncaught → uncaughtException.
+                    res.on("error", () => safeResolve(null));
                 });
-                req.on("error", () => resolve(null));
-                req.on("timeout", () => { req.destroy(); resolve(null); });
+                req.on("error", () => safeResolve(null));
+                // req.destroy() emits "error" which triggers safeResolve — no double-resolve.
+                req.on("timeout", () => { req.destroy(); safeResolve(null); });
                 req.write(postData);
                 req.end();
             });
@@ -401,24 +440,21 @@ async function fetchCobaltAudio(videoUrl) {
             if (result && result.url) {
                 console.log(`[COBALT] SUCCESS from ${endpoint}!`);
 
-                // Dynamically resolve 'Unknown Track' title if available
+                // Dynamically resolve 'Unknown Track' title if available.
+                // Match on _discordMsg presence too so we don't clobber a duplicate
+                // queue entry that shares the same videoId. Sanitize via
+                // allowedMentions.parse: [] so a title like "@everyone" can't ping.
                 try {
-                    const q = global.queue?.get("queue");
+                    const q = global.queue && global.queue.get("queue");
                     if (q && q.songs && result.filename) {
-                        const matchSong = q.songs.find(s => s.title === "Unknown Track" && s.url && extractVideoId(s.url) === videoId);
+                        const matchSong = q.songs.find(s => s.title === "Unknown Track" && s.url && extractVideoId(s.url) === videoId && s._discordMsg);
                         if (matchSong) {
                             const cleanTitle = result.filename.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
                             if (cleanTitle && cleanTitle !== videoId) {
                                 const oldTitle = matchSong.title;
                                 matchSong.title = cleanTitle;
                                 console.log(`[COBALT] Dynamically resolved title: "${cleanTitle}"`);
-                                if (matchSong._discordMsg) {
-                                    try {
-                                        const msg = matchSong._discordMsg;
-                                        const newText = msg.content.replace(oldTitle, cleanTitle);
-                                        msg.edit(newText).catch(() => {});
-                                    } catch (editErr) {}
-                                }
+                                safeEditTitle(matchSong._discordMsg, oldTitle, cleanTitle);
                             }
                         }
                     }
@@ -498,22 +534,15 @@ async function fetchFallbackAudio(videoUrl) {
                     
                     // Dynamically resolve 'Unknown Track' to the real title
                     try {
-                        const q = global.queue?.get("queue");
+                        const q = global.queue && global.queue.get("queue");
                         if (q && q.songs && data.title) {
-                            const matchSong = q.songs.find(s => s.title === "Unknown Track" && s.url && extractVideoId(s.url) === videoId);
+                            const matchSong = q.songs.find(s => s.title === "Unknown Track" && s.url && extractVideoId(s.url) === videoId && s._discordMsg);
                             if (matchSong) {
                                 const oldTitle = matchSong.title;
                                 matchSong.title = data.title;
                                 matchSong.duration = data.duration || matchSong.duration;
                                 console.log(`[FALLBACK] Dynamically resolved title: "${data.title}"`);
-                                // Edit the Discord message to show the real title
-                                if (matchSong._discordMsg) {
-                                    try {
-                                        const msg = matchSong._discordMsg;
-                                        const newText = msg.content.replace(oldTitle, data.title);
-                                        msg.edit(newText).catch(() => {});
-                                    } catch (editErr) {}
-                                }
+                                safeEditTitle(matchSong._discordMsg, oldTitle, data.title);
                             }
                         }
                     } catch (err) {}
@@ -544,22 +573,15 @@ async function fetchFallbackAudio(videoUrl) {
                     
                     // Dynamically resolve 'Unknown Track' to the real title
                     try {
-                        const q = global.queue?.get("queue");
+                        const q = global.queue && global.queue.get("queue");
                         if (q && q.songs && data.title) {
-                            const matchSong = q.songs.find(s => s.title === "Unknown Track" && s.url && extractVideoId(s.url) === videoId);
+                            const matchSong = q.songs.find(s => s.title === "Unknown Track" && s.url && extractVideoId(s.url) === videoId && s._discordMsg);
                             if (matchSong) {
                                 const oldTitle = matchSong.title;
                                 matchSong.title = data.title;
                                 matchSong.duration = data.lengthSeconds || matchSong.duration;
                                 console.log(`[FALLBACK] Dynamically resolved title: "${data.title}"`);
-                                // Edit the Discord message to show the real title
-                                if (matchSong._discordMsg) {
-                                    try {
-                                        const msg = matchSong._discordMsg;
-                                        const newText = msg.content.replace(oldTitle, data.title);
-                                        msg.edit(newText).catch(() => {});
-                                    } catch (editErr) {}
-                                }
+                                safeEditTitle(matchSong._discordMsg, oldTitle, data.title);
                             }
                         }
                     } catch (err) {}
@@ -605,20 +627,16 @@ module.exports = {
         return ((typeof n==='number')&&(n%1!==0));
     },
     log: function(content) {
-        date_ob = new Date();
-      
-        date = date_ob.getDate().toString();
-        month = date_ob.getMonth().toString();
-        year = date_ob.getFullYear().toString();
-      
-        if(date.length === 1){date = "0" + date;};
-        if(month.length === 1){month = "0" + month;};
-        
-        dmy = date + "/" + month + "/" + year;
-      
-        /* Gets hours, minutes and seconds */ 
-        hms = date_ob.toLocaleTimeString();
-      
+        // NOTE: previously this function assigned every local (`date_ob`, `date`,
+        // `month`, `year`, `dmy`, `hms`) without `let`/`const`, leaking them to the
+        // module scope and breaking under `"use strict"`. It also printed
+        // getMonth() (0-indexed) directly, so January logged as "00". Both fixed.
+        const now = new Date();
+        const date = String(now.getDate()).padStart(2, "0");
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const year = String(now.getFullYear());
+        const dmy = `${date}/${month}/${year}`;
+        const hms = now.toLocaleTimeString();
         console.log(`[ ${dmy} | ${hms} ] ${content}`);
     },
     /**
@@ -649,16 +667,21 @@ module.exports = {
         return table.render();
     },
     getUrl: async function (words){
-        stringOfWords = words.join(" ");
-        lookingOnYtb = new Promise(async (resolve) => {
-            YouTube.search(stringOfWords, { limit: 1 })
-                .then(result => {
-                    resolve("https://www.youtube.com/watch?v=" + result[0].id);
-                });
-        });
-
-        let link = await lookingOnYtb;
-        return link;
+        // Rewritten from an `async new Promise(...)` executor with no empty-array
+        // guard and no `.catch()`. On zero results the old code hit
+        // `result[0].id` which threw inside the async executor and swallowed the
+        // rejection — the outer `await` never resolved and every `/play <search>`
+        // that returned no results hung the entire bot until restart.
+        const stringOfWords = Array.isArray(words) ? words.join(" ") : String(words || "");
+        if (!stringOfWords.trim()) return null;
+        try {
+            const results = await YouTube.search(stringOfWords, { limit: 1 });
+            if (!results || results.length === 0 || !results[0].id) return null;
+            return "https://www.youtube.com/watch?v=" + results[0].id;
+        } catch (e) {
+            this.log(`[GETURL] Search failed for "${stringOfWords}": ${e && e.message ? e.message : e}`);
+            return null;
+        }
     },
 
     /**
@@ -703,11 +726,16 @@ module.exports = {
             ffmpegArgs.push("-f", "opus", "pipe:1");
 
             const ffmpeg = spawn(ffmpegPath, ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
-            ffmpeg.stdout.on("error", () => {});
+            // Log stdout errors instead of silently swallowing them — the OLD `() => {}`
+            // handler hid EPIPE / read errors that made "no audio" indistinguishable
+            // from "player idle" downstream.
+            ffmpeg.stdout.on("error", (err) => {
+                if (err && err.code !== "EPIPE") utils.log(`[FFMPEG STDOUT] ${err.message}`);
+            });
             ffmpeg.stderr.on("data", (data) => {
                 const msg = data.toString().trim();
                 // Suppress harmless messages that occur when player is stopped mid-stream
-                if (msg && !/(Connection reset by peer|Broken pipe|Error muxing a packet|Error submitting a packet)/i.test(msg)) {
+                if (msg && !/(Connection reset by peer|Broken pipe|Error muxing a packet|Error submitting a packet|EPIPE)/i.test(msg)) {
                     utils.log(`[FFMPEG STDERR] ${msg}`);
                 }
             });
@@ -758,7 +786,7 @@ module.exports = {
         utils.log(`[AUDIO] InnerTube failed, trying yt-dlp...`);
         const fs = require("fs");
         const path = require("path");
-        const cookiesPath = path.join(process.cwd(), "cookies.txt");
+        const cookiesPath = path.join(__dirname, "cookies.txt");
 
         const ytdlpArgs = [
             "--no-playlist",
@@ -777,24 +805,56 @@ module.exports = {
         }
         ytdlpArgs.push(url);
 
-        const ytdlp = spawn("yt-dlp", ytdlpArgs, { stdio: ["ignore", "pipe", "pipe"] });
-        let ytdlpUrl = "";
+        let ytdlp;
+        try {
+            ytdlp = spawn("yt-dlp", ytdlpArgs, { stdio: ["ignore", "pipe", "pipe"] });
+        } catch (spawnErr) {
+            utils.log(`[YT-DLP] spawn threw synchronously: ${spawnErr.message}`);
+            callback(null);
+            return;
+        }
+        let ytdlpOutput = "";
+        let done = false;
+        const safeCallback = (v) => { if (!done) { done = true; callback(v); } };
 
-        ytdlp.stdout.on("data", (data) => { ytdlpUrl += data.toString().trim(); });
+        // Guard: if yt-dlp is not installed, Node emits an async "error" (ENOENT).
+        // Without this handler the whole process crashes on uncaughtException.
+        ytdlp.on("error", (err) => {
+            utils.log(`[YT-DLP] spawn error: ${err && err.message ? err.message : err} (is yt-dlp installed?)`);
+            safeCallback(null);
+        });
+
+        // Hard timeout — the old code had no upper bound, so a hung yt-dlp
+        // would freeze the whole play() flow forever.
+        const ytdlpTimeout = setTimeout(() => {
+            utils.log(`[YT-DLP] Timed out after 30s — killing.`);
+            try { ytdlp.kill(process.platform === "win32" ? undefined : "SIGKILL"); } catch (_) {}
+            safeCallback(null);
+        }, 30000);
+
+        ytdlp.stdout.on("data", (data) => { ytdlpOutput += data.toString(); });
         ytdlp.stderr.on("data", (data) => {
             const msg = data.toString().trim();
             if (msg.includes("ERROR")) utils.log(`[YT-DLP] ${msg}`);
         });
 
         ytdlp.on("close", async (code) => {
-            if (code === 0 && ytdlpUrl) {
-                if (ytdlpUrl.includes("\n")) ytdlpUrl = ytdlpUrl.split("\n")[0].trim();
-                utils.log(`[AUDIO] yt-dlp success! Starting ffmpeg...`);
-                callback(startFfmpeg(ytdlpUrl));
-                return;
+            clearTimeout(ytdlpTimeout);
+            if (code === 0 && ytdlpOutput) {
+                // Handle CRLF (Windows) and skip yt-dlp warning lines so we grab the URL,
+                // not a "WARNING:" line that happened to be printed first.
+                const urlLine = ytdlpOutput
+                    .split(/\r?\n/)
+                    .map(l => l.trim())
+                    .find(l => l && /^https?:\/\//i.test(l));
+                if (urlLine) {
+                    utils.log(`[AUDIO] yt-dlp success! Starting ffmpeg...`);
+                    safeCallback(startFfmpeg(urlLine));
+                    return;
+                }
             }
             utils.log(`[AUDIO] ALL methods failed. No audio source available.`);
-            callback(null);
+            safeCallback(null);
         });
     },
 
@@ -808,7 +868,7 @@ module.exports = {
     play: async function(song) {
 
         const utils = require("./utils");
-        const serverQueue = queue.get("queue");
+        const serverQueue = global.queue.get("queue");
 
         if(!song){
             utils.log("No songs left in queue");
@@ -824,7 +884,7 @@ module.exports = {
                     lavalink.leaveChannel(serverQueue.guildId);
                 } catch (e) {}
             }
-            queue.delete("queue");
+            global.queue.delete("queue");
             return;
         }
 
@@ -835,22 +895,22 @@ module.exports = {
             try {
                 const lavalink = require("./lavalink");
                 const shoukaku = lavalink.getShoukaku();
-                
+
                 if (shoukaku && shoukaku.players) {
                     utils.log(`[LAVALINK] Trying Lavalink playback for: ${song.title}`);
-                    
+
                     // Search/load the track via Lavalink
                     const track = await lavalink.searchTrack(song.url);
-                    
+
                     if (track) {
                         // Join voice channel via Lavalink/Shoukaku
-                        const guildId = serverQueue.voiceChannel?.guild?.id || serverQueue.guildId;
-                        const channelId = serverQueue.voiceChannel?.id || serverQueue.channelId;
-                        
+                        const guildId = (serverQueue.voiceChannel && serverQueue.voiceChannel.guild && serverQueue.voiceChannel.guild.id) || serverQueue.guildId;
+                        const channelId = (serverQueue.voiceChannel && serverQueue.voiceChannel.id) || serverQueue.channelId;
+
                         if (guildId && channelId) {
                             // Store guild ID for cleanup
                             serverQueue.guildId = guildId;
-                            
+
                             // Get or create player
                             let player = lavalink.getPlayer(guildId);
                             if (!player) {
@@ -861,7 +921,7 @@ module.exports = {
                                 }
                                 player = await lavalink.joinChannel(guildId, channelId, 0);
                             }
-                            
+
                             if (player) {
                                 // Clear auto-disconnect timer
                                 if (serverQueue.disconnectTimer) {
@@ -869,15 +929,19 @@ module.exports = {
                                     serverQueue.disconnectTimer = null;
                                 }
 
-                                // Set up event handlers (once)
-                                if (!serverQueue.lavalinkEventsSet) {
-                                    serverQueue.lavalinkEventsSet = true;
-                                    
+                                // Set up event handlers ONCE per player object.
+                                // Previously the guard lived on the serverQueue, so if the queue was
+                                // torn down and later recreated (e.g. song ends → new queue), the same
+                                // Shoukaku player would get another set of handlers → duplicate `end`
+                                // events + double-shift of the queue.
+                                if (!player._khonshuHandlersBound) {
+                                    player._khonshuHandlersBound = true;
+
                                     player.on("end", (data) => {
                                         if (data.reason === "replaced") return;
-                                        
+
                                         utils.log(`[LAVALINK] Track finished`);
-                                        const q = queue.get("queue");
+                                        const q = global.queue.get("queue");
                                         if (!q) return;
 
                                         if (q.restarting) {
@@ -897,31 +961,43 @@ module.exports = {
                                             q.skipped = false;
                                         }
 
+                                        // Split the "queue drained" and "next song" branches — the OLD
+                                        // code called utils.play(q.songs[0]) with songs[0] === undefined
+                                        // AFTER arming disconnectTimer, which triggered the !song path
+                                        // and immediately destroyed the connection. Auto-DC never fired.
                                         if (q.songs.length === 0) {
                                             utils.log(`[AUTO-DC] No songs left. Will disconnect in 5 minutes if idle.`);
                                             q.disconnectTimer = setTimeout(() => {
-                                                const stillQ = queue.get("queue");
+                                                const stillQ = global.queue.get("queue");
                                                 if (stillQ && stillQ.songs.length === 0) {
                                                     utils.log(`[AUTO-DC] 5 minutes idle. Disconnecting...`);
                                                     try { lavalink.leaveChannel(guildId); } catch(e) {}
-                                                    queue.delete("queue");
+                                                    global.queue.delete("queue");
                                                     if (stillQ.textchannel) {
                                                         try { stillQ.textchannel.send("🌙 Khonshu disconnected after 5 minutes of inactivity."); } catch(e) {}
                                                     }
                                                 }
                                             }, AUTO_DISCONNECT_MS);
+                                            return;
                                         }
 
                                         utils.play(q.songs[0]);
                                     });
 
                                     player.on("stuck", (data) => {
-                                        utils.log(`[LAVALINK] Track stuck, skipping...`);
-                                        const q = queue.get("queue");
-                                        if (q) {
+                                        utils.log(`[LAVALINK] Track stuck`);
+                                        const q = global.queue.get("queue");
+                                        if (!q || !q.songs || q.songs.length === 0) return;
+                                        // Preserve the current track when looping — old code shifted
+                                        // unconditionally, so a transient stuck killed the loop.
+                                        if (!q.loop && !q.skipped) {
                                             q.songs.shift();
-                                            utils.play(q.songs[0]);
                                         }
+                                        if (q.songs.length === 0) {
+                                            utils.log("[LAVALINK] Queue drained after stuck event.");
+                                            return;
+                                        }
+                                        utils.play(q.songs[0]);
                                     });
 
                                     player.on("exception", (data) => {
@@ -934,7 +1010,9 @@ module.exports = {
                                 }
 
                                 // Play the track!
-                                const vol = Math.round((serverQueue.volume || 0.5) * 100);
+                                // `?? 0.5` (not `|| 0.5`) so an intentional 0 stays 0 (mute).
+                                const rawVol = (typeof serverQueue.volume === "number" && Number.isFinite(serverQueue.volume)) ? serverQueue.volume : 0.5;
+                                const vol = Math.max(0, Math.min(1000, Math.round(rawVol * 100)));
                                 await lavalink.playTrack(player, track, vol);
                                 utils.log(`[LAVALINK] Now playing: ${track.info.title}`);
                                 serverQueue.useLavalink = true;
@@ -942,7 +1020,7 @@ module.exports = {
                             }
                         }
                     }
-                    
+
                     utils.log(`[LAVALINK] Lavalink playback setup failed, falling back to ffmpeg...`);
                 }
             } catch (e) {
@@ -950,16 +1028,16 @@ module.exports = {
             }
 
             // === FALLBACK: Old ffmpeg method ===
-            utils.getAudioStream(song.url, serverQueue.filters || [], (ffmpegProcess) => {
-                const currentQueue = queue.get("queue");
+            utils.getAudioStream(song.url, serverQueue.filters || [], async (ffmpegProcess) => {
+                const currentQueue = global.queue.get("queue");
                 if (!currentQueue) {
-                    if (ffmpegProcess) ffmpegProcess.kill();
+                    if (ffmpegProcess) { try { ffmpegProcess.kill(); } catch (_) {} }
                     return;
                 }
 
                 if (!ffmpegProcess) {
                     utils.log(`[AUDIO] Failed to get audio stream for: ${song.title}`);
-                    
+
                     // Notify the user
                     if (currentQueue.textchannel) {
                         try {
@@ -978,30 +1056,52 @@ module.exports = {
                     } else {
                         utils.log(`[AUTO-DC] No songs left after failure. Will disconnect in 5 minutes if idle.`);
                         currentQueue.disconnectTimer = setTimeout(() => {
-                            const stillQ = queue.get("queue");
+                            const stillQ = global.queue.get("queue");
                             if (stillQ && stillQ.songs.length === 0) {
                                 utils.log(`[AUTO-DC] 5 minutes idle. Disconnecting...`);
                                 if (stillQ.connection) {
                                     try { stillQ.connection.destroy(); } catch(e) {}
                                 }
-                                queue.delete("queue");
+                                global.queue.delete("queue");
                                 if (stillQ.textchannel) {
                                     try { stillQ.textchannel.send("🌙 Khonshu disconnected after 5 minutes of inactivity."); } catch(e) {}
                                 }
                             }
-                        }, 300000);
+                        }, AUTO_DISCONNECT_MS);
                     }
                     return;
                 }
 
                 try {
+                    // If Lavalink was "connected" so addAndPlay skipped joinVChannel, but
+                    // Lavalink track resolution/join failed and we fell through to ffmpeg,
+                    // there is no voice connection yet. Establish one now, otherwise the
+                    // audio player has nothing to subscribe to and the track plays to
+                    // nowhere while the queue silently advances.
+                    if (!currentQueue.connection && currentQueue.voiceChannel) {
+                        try {
+                            utils.log("[AUDIO] No voice connection present for ffmpeg fallback — joining now.");
+                            currentQueue.connection = await utils.joinVChannel(currentQueue.voiceChannel, currentQueue.voiceChannel.guild.client);
+                            currentQueue.useLavalink = false;
+                        } catch (joinErr) {
+                            utils.log(`[AUDIO] Failed to join voice for ffmpeg fallback: ${joinErr && joinErr.message ? joinErr.message : joinErr}`);
+                            if (ffmpegProcess) { try { ffmpegProcess.kill(); } catch (_) {} }
+                            if (currentQueue.textchannel) {
+                                try { currentQueue.textchannel.send(`❌ **Failed to play '${song.title}'** — could not connect to voice.`); } catch (_) {}
+                            }
+                            return;
+                        }
+                    }
+
                     const resource = createAudioResource(ffmpegProcess.stdout, {
                         inputType: StreamType.OggOpus,
                         inlineVolume: true
                     });
 
+                    // `?? 1` (not `|| 1`) so an intentional 0 stays 0.
+                    const rawVol = (typeof currentQueue.volume === "number" && Number.isFinite(currentQueue.volume)) ? currentQueue.volume : 1;
                     if (resource.volume) {
-                        resource.volume.setVolume(currentQueue.volume);
+                        resource.volume.setVolume(rawVol);
                     }
                     currentQueue.currentResource = resource;
 
@@ -1012,10 +1112,10 @@ module.exports = {
 
                     if (!currentQueue.player) {
                         currentQueue.player = createAudioPlayer();
-                        
+
                         currentQueue.player.on(AudioPlayerStatus.Idle, () => {
                             utils.log(`[PLAYER] Track finished`);
-                            const q = queue.get("queue");
+                            const q = global.queue.get("queue");
                             if (!q) return;
 
                             if (q.restarting) {
@@ -1039,32 +1139,41 @@ module.exports = {
                                 q.skipped = false;
                             }
 
+                            // Same auto-DC fix as the Lavalink path — do NOT fall through
+                            // to utils.play(undefined) after arming the timer.
                             if (q.songs.length === 0) {
                                 utils.log(`[AUTO-DC] No songs left. Will disconnect in 5 minutes if idle.`);
                                 q.disconnectTimer = setTimeout(() => {
-                                    const stillQ = queue.get("queue");
+                                    const stillQ = global.queue.get("queue");
                                     if (stillQ && stillQ.songs.length === 0) {
                                         utils.log(`[AUTO-DC] 5 minutes idle. Disconnecting...`);
                                         if (stillQ.connection) {
                                             try { stillQ.connection.destroy(); } catch(e) {}
                                         }
-                                        queue.delete("queue");
+                                        global.queue.delete("queue");
                                         if (stillQ.textchannel) {
                                             try { stillQ.textchannel.send("🌙 Khonshu disconnected after 5 minutes of inactivity."); } catch(e) {}
                                         }
                                     }
                                 }, AUTO_DISCONNECT_MS);
+                                return;
                             }
 
                             utils.play(q.songs[0]);
                         });
 
                         currentQueue.player.on("error", (err) => {
-                            console.error("Audio Player Error:", err);
+                            console.error("Audio Player Error:", err && err.message ? err.message : err);
                         });
 
+                        // Previous handler closed over the outer `song` variable, so after the
+                        // first track this log printed the WRONG title on every subsequent song.
+                        // The player is only created once per session, but Playing fires on each
+                        // resource — read the current queue's head song at emit time.
                         currentQueue.player.on(AudioPlayerStatus.Playing, () => {
-                            utils.log(`[PLAYER] Track started playing: ${song.title}`);
+                            const q = global.queue.get("queue");
+                            const title = (q && q.songs && q.songs[0] && q.songs[0].title) || "(unknown)";
+                            utils.log(`[PLAYER] Track started playing: ${title}`);
                         });
 
                         if (currentQueue.connection) {
@@ -1072,6 +1181,11 @@ module.exports = {
                         }
                     }
 
+                    // Kill the previous ffmpeg process before overwriting the reference.
+                    // Otherwise every skip / new track leaks the old ffmpeg child + its fds.
+                    if (currentQueue.ffmpegProcess && currentQueue.ffmpegProcess !== ffmpegProcess) {
+                        try { currentQueue.ffmpegProcess.kill(); } catch (_) {}
+                    }
                     currentQueue.ffmpegProcess = ffmpegProcess;
                     currentQueue.player.play(resource);
 
@@ -1144,36 +1258,49 @@ module.exports = {
             const { spawn } = require("child_process");
             const fs = require("fs");
             const path = require("path");
-            const cookiesPath = path.join(process.cwd(), "cookies.txt");
+            const cookiesPath = path.join(__dirname, "cookies.txt");
             const ytArgs = ["--get-title", "--get-duration", "--no-warnings", "--no-check-certificates"];
             if (fs.existsSync(cookiesPath)) ytArgs.push("--cookies", cookiesPath);
             ytArgs.push(`https://www.youtube.com/watch?v=${videoId}`);
 
             const result = await new Promise((resolve) => {
-                const proc = spawn("yt-dlp", ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+                let done = false;
+                const safeResolve = (v) => { if (!done) { done = true; resolve(v); } };
+                let proc;
+                try {
+                    proc = spawn("yt-dlp", ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+                } catch (spawnErr) {
+                    utils.log(`[METADATA] yt-dlp spawn threw: ${spawnErr.message}`);
+                    return safeResolve(null);
+                }
                 let output = "";
                 proc.stdout.on("data", (d) => { output += d.toString(); });
-                const timeout = setTimeout(() => { try { proc.kill(); } catch(e) {} resolve(null); }, 8000);
+                // Windows: plain kill() may not stop the process; SIGKILL on POSIX.
+                const timeout = setTimeout(() => {
+                    try { proc.kill(process.platform === "win32" ? undefined : "SIGKILL"); } catch(e) {}
+                    safeResolve(null);
+                }, 8000);
                 proc.on("close", (code) => {
                     clearTimeout(timeout);
                     if (code === 0 && output.trim()) {
-                        const lines = output.trim().split("\n");
-                        const title = lines[0]?.trim();
-                        // Parse duration like "3:45" or "1:02:30"
+                        // Split on \r?\n so Windows CRLF doesn't leave trailing \r on the title,
+                        // which the old code fed into strict equality checks downstream.
+                        const lines = output.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                        const title = lines[0];
                         let duration = 0;
                         if (lines[1]) {
-                            const parts = lines[1].trim().split(":").map(Number);
+                            const parts = lines[1].split(":").map(Number);
                             if (parts.length === 3) duration = parts[0]*3600 + parts[1]*60 + parts[2];
                             else if (parts.length === 2) duration = parts[0]*60 + parts[1];
                             else duration = parts[0] || 0;
                         }
                         if (title) {
                             utils.log(`[METADATA] yt-dlp SUCCESS: "${title}"`);
-                            resolve({ title, duration });
-                        } else resolve(null);
-                    } else resolve(null);
+                            safeResolve({ title, duration });
+                        } else safeResolve(null);
+                    } else safeResolve(null);
                 });
-                proc.on("error", () => { clearTimeout(timeout); resolve(null); });
+                proc.on("error", () => { clearTimeout(timeout); safeResolve(null); });
             });
             if (result) return result;
         } catch (err) {
@@ -1270,7 +1397,14 @@ module.exports = {
             utils.log(`[VOICE] Successfully connected to ${voiceChannel.name} (DAVE E2EE active)`);
         } catch (err) {
             utils.log(`[VOICE] Connection failed, destroying...`);
-            connection.destroy();
+            // Guard: entersState may reject because the connection already reached
+            // Destroyed state; calling destroy() a second time throws in older
+            // @discordjs/voice versions. Only destroy if still alive.
+            try {
+                if (connection.state && connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                    connection.destroy();
+                }
+            } catch (_) {}
             throw err;
         }
 

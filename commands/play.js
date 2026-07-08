@@ -222,7 +222,7 @@ async function playFromSearch(client, message, voiceChannel, query) {
 async function addAndPlay(client, message, voiceChannel, song) {
     utils.log(`Got music details: "${song.title}", preparing the music to be played...`);
 
-    let serverQueue = queue.get("queue");
+    let serverQueue = global.queue.get("queue");
 
     if (serverQueue && serverQueue.isVideo) {
         utils.log("[PLAY] Stopping active video stream session to switch to standard audio.");
@@ -232,18 +232,24 @@ async function addAndPlay(client, message, voiceChannel, song) {
         if (serverQueue.streamer) {
             try { serverQueue.streamer.leaveVoice(); } catch (e) {}
         }
-        queue.delete("queue");
+        global.queue.delete("queue");
         serverQueue = null;
     }
 
     if (!serverQueue || !serverQueue.songs) {
+        // Consume any pending volume set via `$volume` before playback started, then
+        // clear it so it doesn't silently become the default for every future session.
+        // `?? 1` semantics via explicit finite check so an intentional 0 survives.
+        const pendingVol = (typeof global.pendingVolume === "number" && Number.isFinite(global.pendingVolume)) ? global.pendingVolume : 1;
+        global.pendingVolume = null;
+
         const queueConstruct = {
             textchannel: message.channel,
             voiceChannel: voiceChannel,
             connection: null,
             player: null,
             songs: [],
-            volume: global.pendingVolume || 1,
+            volume: pendingVol,
             playing: true,
             loop: false,
             skipped: false,
@@ -254,7 +260,7 @@ async function addAndPlay(client, message, voiceChannel, song) {
             disconnectTimer: null // Auto-disconnect timer
         };
 
-        queue.set("queue", queueConstruct);
+        global.queue.set("queue", queueConstruct);
         queueConstruct.songs.push(song);
 
         try {
@@ -277,7 +283,7 @@ async function addAndPlay(client, message, voiceChannel, song) {
             }
         } catch (e) {
             console.error("Error joining voice/playing:", e);
-            queue.delete("queue");
+            global.queue.delete("queue");
             return message.channel.send("❌ Failed to join voice channel or play track.");
         }
     } else {
@@ -326,7 +332,7 @@ async function queueSpotifyTracks(message, tracks) {
                     requestedby: message.author.username
                 };
 
-                const serverQueue = queue.get("queue");
+                const serverQueue = global.queue.get("queue");
                 if (!serverQueue) break;  // Queue was destroyed, stop processing
 
                 // Clear auto-disconnect timer since we're adding songs
@@ -350,7 +356,7 @@ async function queueSpotifyTracks(message, tracks) {
                         url: fallbackResult.url,
                         requestedby: message.author.username
                     };
-                    const serverQueue = queue.get("queue");
+                    const serverQueue = global.queue.get("queue");
                     if (serverQueue) {
                         if (serverQueue.disconnectTimer) {
                             clearTimeout(serverQueue.disconnectTimer);

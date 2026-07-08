@@ -5,36 +5,37 @@ const YouTube = require("youtube-sr").default;
 // YouTube URL pattern
 const YT_URL_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\/.+$/;
 
-/** 
- * @description User play — mention a user, jump to their VC, and play a song
- * Usage: uplay @user <song URL or search query>
- * @param {Discord.Client} client the client that runs the commands
- * @param {Discord.Message} message the command's message
- * @param {Array<String>} args user mention and song query
+/**
+ * @description User play — mention a user, jump to their VC, and play a song.
+ *              Usage: uplay @user <song URL or search query>
+ * @param {Discord.Client} client
+ * @param {Discord.Message} message
+ * @param {Array<String>} args user mention/ID and song query
  */
 module.exports.run = async (client, message, args) => {
 
     if (args.length < 2) {
-        return message.channel.send(
+        try { await message.channel.send(
             "❌ **Usage:** `uplay @user <song URL or search>`\n" +
             "**Example:** `uplay @Someone https://youtu.be/dQw4w9WgXcQ`"
-        );
+        ); } catch (_) {}
+        return;
     }
 
     // Extract user ID from mention (<@123456> or <@!123456>) or raw ID
     const userInput = args[0];
     const userIdMatch = userInput.match(/^<@!?(\d+)>$/) || userInput.match(/^(\d{17,20})$/);
     if (!userIdMatch) {
-        return message.channel.send("❌ Please mention a valid user or provide their ID.\n**Example:** `uplay @Someone <song>`");
+        try { await message.channel.send("❌ Please mention a valid user or provide their ID.\n**Example:** `uplay @Someone <song>`"); } catch (_) {}
+        return;
     }
     const targetUserId = userIdMatch[1];
-
     const query = args.slice(1).join(" ");
 
     // Find the user's voice channel across all guilds
     let voiceChannel = null;
     let targetGuild = null;
-    let foundInGuild = null; // Track if user exists in any mutual server
+    let foundInGuild = null;
 
     for (const [, guild] of client.guilds.cache) {
         try {
@@ -47,10 +48,9 @@ module.exports.run = async (client, message, args) => {
                     break;
                 }
             }
-        } catch (e) {}
+        } catch (_) {}
     }
 
-    // If not found in cache, try fetching from all guilds
     if (!voiceChannel && !foundInGuild) {
         for (const [, guild] of client.guilds.cache) {
             try {
@@ -63,194 +63,199 @@ module.exports.run = async (client, message, args) => {
                         break;
                     }
                 }
-            } catch (e) {}
+            } catch (_) {}
         }
     }
 
     if (!foundInGuild) {
-        return message.channel.send(`❌ <@${targetUserId}> is not in any mutual server.`);
+        try { await message.channel.send(`❌ <@${targetUserId}> is not in any mutual server.`); } catch (_) {}
+        return;
     }
-
     if (!voiceChannel) {
-        return message.channel.send(`❌ <@${targetUserId}> is not in any voice channel right now.`);
+        try { await message.channel.send(`❌ <@${targetUserId}> is not in any voice channel right now.`); } catch (_) {}
+        return;
     }
 
     utils.log(`[UPLAY] Target user <${targetUserId}> found in ${targetGuild.name} > ${voiceChannel.name}`);
 
-    // ───────────────────────────────────────
-    // Resolve the song (YouTube URL or search)
-    // ───────────────────────────────────────
-    let song;
+    const song = await resolveSong(query);
+    if (!song) {
+        try { await message.channel.send("❌ No results found for your query."); } catch (_) {}
+        return;
+    }
+    song.requestedby = message.author.username;
 
+    // Session routing — same principle as $rplay: if an existing session runs in a
+    // DIFFERENT guild/VC, tear it down and rebuild at the target user's VC.
+    utils.log(`[UPLAY] Got: "${song.title}" — joining ${voiceChannel.name} in ${targetGuild.name}...`);
+    let serverQueue = global.queue.get("queue");
+
+    if (serverQueue && sessionMatchesTarget(serverQueue, targetGuild, voiceChannel)) {
+        await appendToActiveSession(client, message, serverQueue, song, targetGuild, voiceChannel);
+        return;
+    }
+
+    if (serverQueue) {
+        utils.log(`[UPLAY] Tearing down existing session (${serverQueue.voiceChannel ? serverQueue.voiceChannel.name : "?"}) to move to ${voiceChannel.name}`);
+        await teardownSession(serverQueue);
+    }
+
+    await startFreshSession(client, message, targetGuild, voiceChannel, song);
+};
+
+function sessionMatchesTarget(serverQueue, guild, voiceChannel) {
+    if (serverQueue.isVideo) return false;
+    if (!serverQueue.voiceChannel) return false;
+    if (serverQueue.voiceChannel.guild.id !== guild.id) return false;
+    return serverQueue.voiceChannel.id === voiceChannel.id;
+}
+
+async function teardownSession(serverQueue) {
+    if (serverQueue.disconnectTimer) {
+        try { clearTimeout(serverQueue.disconnectTimer); } catch (_) {}
+    }
+    if (serverQueue.streamPlay && serverQueue.streamPlay.command) {
+        try { serverQueue.streamPlay.command.kill(); } catch (_) {}
+    }
+    if (serverQueue.streamer) {
+        try { serverQueue.streamer.leaveVoice(); } catch (_) {}
+    }
+    if (serverQueue.ffmpegProcess) {
+        try { serverQueue.ffmpegProcess.kill(); } catch (_) {}
+    }
+    if (serverQueue.useLavalink && serverQueue.guildId) {
+        try {
+            const lavalink = require("../lavalink");
+            await lavalink.leaveChannel(serverQueue.guildId);
+        } catch (_) {}
+    } else {
+        if (serverQueue.player) { try { serverQueue.player.stop(true); } catch (_) {} }
+        if (serverQueue.connection) { try { serverQueue.connection.destroy(); } catch (_) {} }
+    }
+    global.queue.delete("queue");
+}
+
+async function resolveSong(query) {
     if (YT_URL_REGEX.test(query)) {
-        let url = query, title, duration;
+        const url = query;
+        let title = "Unknown Track", duration = 0;
         try {
             const video = await YouTube.getVideo(query);
             if (video) {
                 title = video.title;
                 duration = Math.floor((video.duration || 0) / 1000);
-            } else {
-                title = "Unknown Track";
-                duration = 0;
             }
-        } catch (e) {
+        } catch (_) {
             try {
                 const results = await YouTube.search(query, { limit: 1 });
                 if (results && results.length > 0) {
                     title = results[0].title;
-                    duration = Math.floor(results[0].duration / 1000);
-                } else {
-                    title = "Unknown Track";
-                    duration = 0;
+                    duration = Math.floor((results[0].duration || 0) / 1000);
                 }
-            } catch (e2) {
-                title = "Unknown Track";
-                duration = 0;
-            }
+            } catch (_) {}
         }
-
         if (title === "Unknown Track") {
-            utils.log(`[UPLAY] YouTube library failed. Trying fallback metadata...`);
             try {
                 const meta = await utils.fetchMetadata(url);
-                if (meta && meta.title) {
-                    title = meta.title;
-                    duration = meta.duration;
-                    utils.log(`[UPLAY] Fallback metadata success! Title: "${title}"`);
-                }
-            } catch (metaError) {
-                utils.log(`[UPLAY] Fallback metadata failed: ${metaError.message}`);
-            }
+                if (meta && meta.title) { title = meta.title; duration = meta.duration || 0; }
+            } catch (_) {}
         }
-
-        song = { title, duration, url, requestedby: message.author.username };
-
-    } else {
-        utils.log(`[UPLAY] Searching: "${query}"`);
-        try {
-            const results = await YouTube.search(query, { limit: 1 });
-            if (!results || results.length === 0) {
-                try {
-                    const fallbackResult = await utils.fetchSearch(query);
-                    if (fallbackResult && fallbackResult.url) {
-                        song = {
-                            title: fallbackResult.title,
-                            duration: fallbackResult.duration,
-                            url: fallbackResult.url,
-                            requestedby: message.author.username
-                        };
-                    }
-                } catch (searchErr) {}
-
-                if (!song) {
-                    return message.channel.send("❌ No results found for your query.");
-                }
-            } else {
-                song = {
-                    title: results[0].title,
-                    duration: Math.floor(results[0].duration / 1000),
-                    url: `https://www.youtube.com/watch?v=${results[0].id}`,
-                    requestedby: message.author.username
-                };
-            }
-        } catch (e) {
-            utils.log(`[UPLAY] Standard search failed. Trying fallback...`);
-            try {
-                const fallbackResult = await utils.fetchSearch(query);
-                if (fallbackResult && fallbackResult.url) {
-                    song = {
-                        title: fallbackResult.title,
-                        duration: fallbackResult.duration,
-                        url: fallbackResult.url,
-                        requestedby: message.author.username
-                    };
-                }
-            } catch (searchErr) {}
-
-            if (!song) {
-                return message.channel.send("❌ Error searching for the track.");
-            }
-        }
+        return { title, duration, url };
     }
 
-    // ───────────────────────────────────────
-    // Add to queue and play
-    // ───────────────────────────────────────
-    utils.log(`[UPLAY] Got: "${song.title}" — joining ${voiceChannel.name} in ${targetGuild.name}...`);
-
-    let serverQueue = queue.get("queue");
-
-    if (serverQueue && serverQueue.isVideo) {
-        utils.log("[UPLAY] Stopping active video stream to switch to audio.");
-        if (serverQueue.streamPlay && serverQueue.streamPlay.command) {
-            try { serverQueue.streamPlay.command.kill(); } catch (e) {}
+    utils.log(`[UPLAY] Searching: "${query}"`);
+    try {
+        const results = await YouTube.search(query, { limit: 1 });
+        if (results && results.length > 0) {
+            return {
+                title: results[0].title,
+                duration: Math.floor((results[0].duration || 0) / 1000),
+                url: `https://www.youtube.com/watch?v=${results[0].id}`
+            };
         }
-        if (serverQueue.streamer) {
-            try { serverQueue.streamer.leaveVoice(); } catch (e) {}
+    } catch (_) {}
+    try {
+        const fallbackResult = await utils.fetchSearch(query);
+        if (fallbackResult && fallbackResult.url) {
+            return {
+                title: fallbackResult.title,
+                duration: fallbackResult.duration || 0,
+                url: fallbackResult.url
+            };
         }
-        queue.delete("queue");
-        serverQueue = null;
-    }
+    } catch (_) {}
+    return null;
+}
 
-    if (!serverQueue || !serverQueue.songs) {
-        const queueConstruct = {
-            textchannel: message.channel,
-            voiceChannel: voiceChannel,
-            connection: null,
-            player: null,
-            songs: [],
-            volume: global.pendingVolume || 1,
-            playing: true,
-            loop: false,
-            skipped: false,
-            currentResource: null,
-            ffmpegProcess: null,
-            filters: [],
-            restarting: false,
-            disconnectTimer: null
-        };
+async function startFreshSession(client, message, guild, voiceChannel, song) {
+    const lavalink = require("../lavalink");
+    const useLavalink = lavalink.isConnected();
+    const pending = (typeof global.pendingVolume === "number" && Number.isFinite(global.pendingVolume)) ? global.pendingVolume : 1;
+    global.pendingVolume = null;
 
-        queue.set("queue", queueConstruct);
-        queueConstruct.songs.push(song);
+    const queueConstruct = {
+        textchannel: message.channel,
+        voiceChannel: voiceChannel,
+        connection: null,
+        guildId: guild.id,
+        channelId: voiceChannel.id,
+        player: null,
+        songs: [song],
+        volume: pending,
+        playing: true,
+        loop: false,
+        skipped: false,
+        currentResource: null,
+        ffmpegProcess: null,
+        filters: [],
+        restarting: false,
+        disconnectTimer: null,
+        useLavalink: useLavalink
+    };
+    global.queue.set("queue", queueConstruct);
 
-        try {
-            const connection = await utils.joinVChannel(voiceChannel, client);
-            queueConstruct.connection = connection;
-            try {
-                const sentMsg = await message.channel.send(`✅ '**${song.title}**' started playing in **${targetGuild.name}** > **${voiceChannel.name}**`);
-                song._discordMsg = sentMsg;
-            } catch (e) {}
-            await utils.play(queueConstruct.songs[0]);
-        } catch (e) {
-            console.error("[UPLAY] Error joining/playing:", e);
-            queue.delete("queue");
-            return message.channel.send(`❌ Failed to join **${voiceChannel.name}**: ${e.message}`);
-        }
-    } else {
-        if (serverQueue.disconnectTimer) {
-            clearTimeout(serverQueue.disconnectTimer);
-            serverQueue.disconnectTimer = null;
-        }
-
-        serverQueue.songs.push(song);
-
-        // If queue was empty (e.g. after a failed track), start playback
-        if (serverQueue.songs.length === 1) {
-            utils.log(`[UPLAY] Queue was idle, starting playback: ${song.title}`);
-            try {
-                const sentMsg = await message.channel.send(`✅ '**${song.title}**' started playing in **${targetGuild.name}** > **${voiceChannel.name}**`);
-                song._discordMsg = sentMsg;
-            } catch (e) {}
-            await utils.play(song);
+    try {
+        if (useLavalink) {
+            const player = await lavalink.joinChannel(guild.id, voiceChannel.id, 0);
+            queueConstruct.player = player;
         } else {
-            utils.log(`[UPLAY] Added to queue: ${song.title}`);
-            try {
-                const sentMsg = await message.channel.send(`✅ '**${song.title}**' has been added to the queue`);
-                song._discordMsg = sentMsg;
-            } catch (e) {}
+            queueConstruct.connection = await utils.joinVChannel(voiceChannel, client);
         }
+        try {
+            const sentMsg = await message.channel.send(`✅ '**${song.title}**' started playing in **${guild.name}** > **${voiceChannel.name}**`);
+            song._discordMsg = sentMsg;
+        } catch (_) {}
+        await utils.play(queueConstruct.songs[0]);
+    } catch (e) {
+        console.error("[UPLAY] Error joining/playing:", e);
+        global.queue.delete("queue");
+        try { await message.channel.send(`❌ Failed to join **${voiceChannel.name}**: ${e && e.message ? e.message : e}`); } catch (_) {}
     }
-};
+}
+
+async function appendToActiveSession(client, message, serverQueue, song, guild, voiceChannel) {
+    if (serverQueue.disconnectTimer) {
+        try { clearTimeout(serverQueue.disconnectTimer); } catch (_) {}
+        serverQueue.disconnectTimer = null;
+    }
+
+    serverQueue.songs.push(song);
+
+    if (serverQueue.songs.length === 1) {
+        utils.log(`[UPLAY] Queue was idle, starting playback: ${song.title}`);
+        try {
+            const sentMsg = await message.channel.send(`✅ '**${song.title}**' started playing in **${guild.name}** > **${voiceChannel.name}**`);
+            song._discordMsg = sentMsg;
+        } catch (_) {}
+        await utils.play(song);
+    } else {
+        utils.log(`[UPLAY] Added to queue: ${song.title}`);
+        try {
+            const sentMsg = await message.channel.send(`✅ '**${song.title}**' has been added to the queue`);
+            song._discordMsg = sentMsg;
+        } catch (_) {}
+    }
+}
 
 module.exports.names = {
     list: ["uplay", "up", "userplay"]

@@ -6,33 +6,62 @@ const utils = require("../utils");
 // ═══════════════════════════════════════════
 const AVAILABLE_FILTERS = ["bassboost", "nightcore", "vaporwave", "8d"];
 
-/** 
- * @description Toggle DSP audio filters (bassboost, nightcore, vaporwave, 8d)
- * @param {Discord.Client} client the client that runs the commands
- * @param {Discord.Message} message the command's message
- * @param {Array<String>} args filter name or "clear"/"list"
+// Lavalink filter presets. Each preset yields a partial Shoukaku filter payload;
+// active filters get merged and passed to player.setFilters(...).
+const LAVALINK_PRESETS = {
+    bassboost: {
+        equalizer: [
+            { band: 0, gain: 0.30 },
+            { band: 1, gain: 0.25 },
+            { band: 2, gain: 0.20 },
+            { band: 3, gain: 0.15 },
+            { band: 4, gain: 0.10 }
+        ]
+    },
+    nightcore: {
+        timescale: { speed: 1.25, pitch: 1.25, rate: 1.0 }
+    },
+    vaporwave: {
+        timescale: { speed: 0.8, pitch: 0.8, rate: 1.0 }
+    },
+    "8d": {
+        rotation: { rotationHz: 0.2 }
+    }
+};
+
+/**
+ * @description Toggle DSP audio filters (bassboost, nightcore, vaporwave, 8d).
+ *              Works on both the ffmpeg pipeline (restart current track) and the
+ *              Lavalink pipeline (setFilters, no restart needed).
+ * @param {Discord.Client} client
+ * @param {Discord.Message} message
+ * @param {Array<String>} args filter name / "clear" / "list"
  */
 module.exports.run = async (client, message, args) => {
 
-    const serverQueue = queue.get("queue");
+    const serverQueue = global.queue.get("queue");
 
     if (!serverQueue || !serverQueue.songs || serverQueue.songs.length === 0) {
-        return message.channel.send("❌ You need to have a song playing to change filters.");
+        try { await message.channel.send("❌ You need to have a song playing to change filters."); } catch (_) {}
+        return;
     }
 
-    // Initialize filters array if not exists
+    // Initialize filters array if not exists (vplay.js and older queue constructors omit it).
     if (!serverQueue.filters) serverQueue.filters = [];
 
     // No args — show current status
     if (!args[0]) {
-        const active = serverQueue.filters.length > 0 
+        const active = serverQueue.filters.length > 0
             ? serverQueue.filters.map(f => `\`${f}\``).join(", ")
             : "None";
-        return message.channel.send(
-            `🎛️ **Active Filters:** ${active}\n` +
-            `📋 **Available:** ${AVAILABLE_FILTERS.map(f => `\`${f}\``).join(", ")}\n` +
-            `💡 Use \`$filter <name>\` to toggle, \`$filter clear\` to remove all.`
-        );
+        try {
+            await message.channel.send(
+                `🎛️ **Active Filters:** ${active}\n` +
+                `📋 **Available:** ${AVAILABLE_FILTERS.map(f => `\`${f}\``).join(", ")}\n` +
+                `💡 Use \`$filter <name>\` to toggle, \`$filter clear\` to remove all.`
+            );
+        } catch (_) {}
+        return;
     }
 
     const filterName = args[0].toLowerCase();
@@ -40,74 +69,98 @@ module.exports.run = async (client, message, args) => {
     // Clear all filters
     if (filterName === "clear" || filterName === "off" || filterName === "reset") {
         if (serverQueue.filters.length === 0) {
-            return message.channel.send("🎛️ No filters are currently active.");
+            try { await message.channel.send("🎛️ No filters are currently active."); } catch (_) {}
+            return;
         }
         serverQueue.filters = [];
         utils.log(`[FILTER] Cleared all filters`);
-
-        // Restart current track with no filters
-        restartWithFilters(serverQueue, message);
+        await applyFilters(serverQueue, message);
         return;
     }
 
     // List available filters
     if (filterName === "list") {
-        const active = serverQueue.filters.length > 0 
+        const active = serverQueue.filters.length > 0
             ? serverQueue.filters.map(f => `\`${f}\``).join(", ")
             : "None";
-        return message.channel.send(
-            `🎛️ **Active Filters:** ${active}\n` +
-            `📋 **Available:** ${AVAILABLE_FILTERS.map(f => `\`${f}\``).join(", ")}`
-        );
+        try {
+            await message.channel.send(
+                `🎛️ **Active Filters:** ${active}\n` +
+                `📋 **Available:** ${AVAILABLE_FILTERS.map(f => `\`${f}\``).join(", ")}`
+            );
+        } catch (_) {}
+        return;
     }
 
     // Validate filter name
     if (!AVAILABLE_FILTERS.includes(filterName)) {
-        return message.channel.send(
-            `❌ Unknown filter \`${filterName}\`.\n` +
-            `📋 **Available:** ${AVAILABLE_FILTERS.map(f => `\`${f}\``).join(", ")}`
-        );
+        try {
+            await message.channel.send(
+                `❌ Unknown filter \`${filterName}\`.\n` +
+                `📋 **Available:** ${AVAILABLE_FILTERS.map(f => `\`${f}\``).join(", ")}`
+            );
+        } catch (_) {}
+        return;
     }
 
     // Toggle the filter
     const idx = serverQueue.filters.indexOf(filterName);
     if (idx > -1) {
-        // Remove (disable)
         serverQueue.filters.splice(idx, 1);
         utils.log(`[FILTER] Disabled: ${filterName}`);
         try {
             await message.channel.send(`🎛️ **${filterName}** filter disabled. Active: ${serverQueue.filters.length > 0 ? serverQueue.filters.map(f => `\`${f}\``).join(", ") : "None"}`);
-        } catch (e) {}
+        } catch (_) {}
     } else {
-        // Add (enable)
         serverQueue.filters.push(filterName);
         utils.log(`[FILTER] Enabled: ${filterName}`);
         try {
             await message.channel.send(`🎛️ **${filterName}** filter enabled. Active: ${serverQueue.filters.map(f => `\`${f}\``).join(", ")}`);
-        } catch (e) {}
+        } catch (_) {}
     }
 
-    // Restart current track to apply new filter chain
-    restartWithFilters(serverQueue, message);
+    await applyFilters(serverQueue, message);
 };
 
 /**
- * @description Restarts the current track to apply new filter settings
+ * @description Applies the current filter set. On Lavalink, uses setFilters (no restart).
+ *              On the ffmpeg pipeline, restarts the current track through the Idle handler.
  */
-function restartWithFilters(serverQueue, message) {
+async function applyFilters(serverQueue, message) {
     if (!serverQueue || !serverQueue.songs || serverQueue.songs.length === 0) return;
 
-    // Kill current ffmpeg process
-    if (serverQueue.ffmpegProcess) {
-        try { serverQueue.ffmpegProcess.kill(); } catch (e) {}
+    if (serverQueue.useLavalink && serverQueue.guildId) {
+        try {
+            const lavalink = require("../lavalink");
+            const player = lavalink.getPlayer(serverQueue.guildId);
+            if (player) {
+                // Merge every enabled preset into one payload; empty payload clears everything.
+                const payload = {};
+                for (const name of serverQueue.filters) {
+                    const preset = LAVALINK_PRESETS[name];
+                    if (!preset) continue;
+                    for (const key of Object.keys(preset)) {
+                        payload[key] = preset[key];
+                    }
+                }
+                await player.setFilters(payload);
+                utils.log(`[FILTER] Applied Lavalink filters: ${JSON.stringify(payload)}`);
+            } else {
+                utils.log("[FILTER] Lavalink path active but no player found; filter stored but not applied.");
+            }
+        } catch (e) {
+            utils.log(`[FILTER] Lavalink setFilters failed: ${e && e.message ? e.message : e}`);
+        }
+        return;
     }
 
-    // Mark as restarting so the Idle handler doesn't shift the queue
+    // ffmpeg path — kill current process and let the Idle handler restart.
+    if (serverQueue.ffmpegProcess) {
+        try { serverQueue.ffmpegProcess.kill(); } catch (_) {}
+    }
     serverQueue.restarting = true;
-
-    // Stop the player — the Idle handler will detect `restarting` and replay
     if (serverQueue.player) {
-        serverQueue.player.stop();
+        try { serverQueue.player.stop(); } catch (_) {}
     }
 }
 

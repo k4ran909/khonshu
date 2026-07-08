@@ -64,36 +64,61 @@ graph TD
 | Command | Aliases | Description |
 |:---|:---|:---|
 | `$play <query/URL>` | `$p` | Play audio from YouTube search, YouTube URL, or Spotify link |
-| `$vplay <query/URL>` | `$vp` | Stream YouTube video (defaults to fast Camera; append `-s` for Screenshare) |
+| `$vplay <query/URL>` | `$vp` | Stream YouTube video (Go Live screenshare by default) |
 | `$stop` | `$st` | Stop playback, clear queue, and leave VC |
-| `$skip` | — | Skip to the next track in queue |
+| `$skip` | `$s` | Skip to the next track in queue |
 | `$join` | `$j` | Move bot to your current VC (resumes playback) |
-| `$loop` | — | Toggle loop on the current track |
+| `$loop` | `$l` | Toggle loop on the current track |
 
 ### 📋 Queue Management
 | Command | Aliases | Description |
 |:---|:---|:---|
 | `$queue [page]` | `$q` | View the queue with pagination (10 per page) |
 | `$shuffle` | `$sh`, `$random` | Shuffle all queued tracks randomly |
-| `$clear` | — | Clear the entire queue |
+| `$clear` | — | Clear the entire queue (keeps the current track) |
 
 ### 🎛️ DSP Audio Filters
 | Command | Aliases | Description |
 |:---|:---|:---|
-| `$filter bassboost` | `$f`, `$fx`, `$effect` | Toggle heavy low-end bass boost |
-| `$filter nightcore` | | Toggle 1.25x speed + higher pitch |
-| `$filter vaporwave` | | Toggle 0.8x speed + lower pitch |
+| `$filter` | `$f`, `$fx`, `$effect` | Show currently active filters |
+| `$filter list` | | Show active + available filters |
+| `$filter bassboost` | | Toggle heavy low-end bass boost |
+| `$filter nightcore` | | Toggle 1.25× speed + higher pitch |
+| `$filter vaporwave` | | Toggle 0.8× speed + lower pitch |
 | `$filter 8d` | | Toggle audio panning left ↔ right |
-| `$filter clear` | | Remove all active filters |
-| `$filter` | | Show currently active filters |
+| `$filter clear` | `off`, `reset` | Remove all active filters |
 
-> **Tip:** Filters are stackable! Enable multiple at once (e.g. `$filter bassboost` then `$filter nightcore`).
+> **Tip:** Filters are stackable! Enable multiple at once (e.g. `$filter bassboost` then `$filter nightcore`). On the ffmpeg pipeline the current track is restarted to apply the chain; on the Lavalink pipeline they're applied live via `player.setFilters`.
 
 ### 🔊 Volume
 | Command | Aliases | Description |
 |:---|:---|:---|
-| `$volume <0.1-10>` | `$v` | Set volume (works even without a song playing) |
-| `$volume earrape` | | Temporary max volume blast (requires confirmation) |
+| `$volume <0.1 - 10>` | `$v` | Set playback volume (1 = 100%) — works even without a song playing (pre-set) |
+| `$volume earrape` | | Temporary 100× volume blast for 7s (requires ✅ reaction from you) |
+
+### 🎥 Video Streaming Flags (`$vplay` / `$vp`)
+| Form | Description |
+|:---|:---|
+| `$vplay <query/URL>` | Default: Go Live screenshare |
+| `$vplay -s <query/URL>` | Screenshare (aliases: `--screenshare`, `--go-live`, `--live`) |
+| `$vplay -c <query/URL>` | Virtual Camera (aliases: `--camera`, `--cam`) |
+| `$vplay obs <query/URL>` | Route through OBS Virtual Camera device |
+| `$vplay camera <query/URL>` | Same as `obs` (shortcut: `cam`) |
+
+### 🎯 Targeted Playback
+| Command | Aliases | Description |
+|:---|:---|:---|
+| `$rplay <guildId> <channelId> <query/URL>` | `$rp`, `$remoteplay` | Play in any guild + VC by ID. Tears down the current session if it's running in a different location. |
+| `$uplay @user <query/URL>` | `$up`, `$userplay` | Jump to the target user's current VC and play. Tears down the current session if it's running elsewhere. |
+
+### 🌐 Server Management (`$server`)
+| Command | Aliases | Description |
+|:---|:---|:---|
+| `$server list` | `$joinserver`, `$invite` | List all servers the bot account is in (top 25 by member count) |
+| `$server info <invite>` | | Preview a server without joining |
+| `$server leave <guildId>` | | Leave a server |
+
+> **Note:** Auto-accepting invites via the API is disabled — Discord treats it as a selfbot detection signal. Use `$server info <invite>` to preview, then join manually from your Discord client.
 
 ### ℹ️ Info
 | Command | Aliases | Description |
@@ -104,20 +129,22 @@ graph TD
 
 ## 📺 Video Streaming ($vplay)
 
-Khonshu features a state-of-the-art **video streaming engine** that broadcasts high-definition YouTube video streams directly into Discord voice channels using two modes:
+Khonshu features a **video streaming engine** that broadcasts high-definition YouTube video streams directly into Discord voice channels. Two output modes:
 
-### 1. 📷 Virtual Camera Mode (Default & Ultra-Fast)
-Streams video as a Virtual Camera feed directly over the primary voice channel socket. Since it avoids the signaling overhead of launching a separate Go Live session and does not need to decode frame previews on the CPU, it loads **instantly** (under 1 second) and has extremely low CPU usage!
+### 1. 📺 Screenshare Mode — Go Live (Default)
+Streams via Discord's official **Go Live** feature. This is the default when no flag is provided, or when any of `-s`, `--screenshare`, `--go-live`, or `--live` is present.
 ```
 $vplay https://youtu.be/4vI3mOS9gIo
-$vp LOFI hiphop radio
+$vp LOFI hiphop radio -s
+$vp https://youtu.be/4vI3mOS9gIo --screenshare
 ```
 
-### 2. 📺 Screenshare Mode (Go Live)
-Streams video using Discord's official **Go Live** screensharing feature. Activated by appending a screenshare flag (`-s` or `--screenshare`):
+### 2. 📷 Virtual Camera Mode
+Streams video as a Virtual Camera feed over the primary voice channel socket. Activated with `-c`, `--camera`, or `--cam`; also via the `obs` / `camera` / `cam` device shortcuts (which route through an OBS Virtual Camera device on the host).
 ```
-$vplay LOFI hiphop radio -s
-$vp https://youtu.be/4vI3mOS9gIo --screenshare
+$vplay https://youtu.be/4vI3mOS9gIo -c
+$vp LOFI hiphop radio --camera
+$vp obs https://youtu.be/4vI3mOS9gIo
 ```
 
 ### Key Technical Specs:
@@ -256,16 +283,19 @@ This is fully transparent — you don't need to configure anything. The library 
 khonshu/
 ├── commands/
 │   ├── play.js        # YouTube + Spotify playback
-│   ├── vplay.js       # YouTube Go Live E2EE video screensharing
+│   ├── vplay.js       # YouTube Go Live / Virtual Camera video streaming
 │   ├── stop.js        # Stop and leave VC
 │   ├── skip.js        # Skip current track
-│   ├── join.js        # Move bot to your VC
+│   ├── join.js        # Move bot to your VC (preserves ffmpeg / Lavalink pipeline)
 │   ├── queue.js       # Paginated queue display
 │   ├── shuffle.js     # Fisher-Yates queue shuffle
-│   ├── filter.js      # DSP audio filter toggles
-│   ├── volume.js      # Volume control (pre-set supported)
+│   ├── filter.js      # DSP audio filter toggles (ffmpeg + Lavalink)
+│   ├── volume.js      # Volume control (pre-set supported, earrape mode)
 │   ├── loop.js        # Loop toggle
 │   ├── clear.js       # Clear queue
+│   ├── rplay.js       # Remote play in any guild+VC by ID
+│   ├── uplay.js       # Jump to a target user's VC and play
+│   ├── server.js      # List/info/leave servers (no auto-accept invites)
 │   └── help.js        # Full command menu
 ├── events/
 │   ├── messageCreate.js  # Command parser (DM + mention)
@@ -273,6 +303,7 @@ khonshu/
 ├── index.js           # Bot entry point
 ├── patch-stream.js    # DAVE E2EE video/voice patcher script
 ├── utils.js           # Audio pipeline, voice, DSP filters
+├── lavalink.js        # Optional Shoukaku / Lavalink integration
 ├── config.js          # Local config (gitignored)
 ├── config.example.js  # Config template
 ├── strings.json       # Response messages
@@ -280,6 +311,27 @@ khonshu/
 ├── package.json       # Dependencies
 └── .dockerignore      # Docker exclusions
 ```
+
+---
+
+## 🛠️ Changelog — `dev`
+
+Recent fixes and improvements on the `dev` branch:
+
+### Bug fixes
+- **ffmpeg fallback with no voice connection** — When Lavalink reported connected but failed to resolve/join a track, playback fell through to the ffmpeg pipeline with a `null` voice connection, so audio played to nowhere while the queue silently advanced. The fallback now establishes a voice connection on demand (`utils.js`).
+- **Cookie path mismatch** — Cookies were written to the project root (`__dirname`) but read from `process.cwd()`, so auth silently broke when the process was launched from another working directory. All readers now anchor to the project root (`utils.js`, `commands/vplay.js`).
+- **`$help` / `$menu` never sent** — The menu exceeded Discord's 2000-character message limit and threw `Invalid Form Body` every time. It's now split into multiple messages on section boundaries (`commands/help.js`).
+- **`pendingVolume` leak** — A one-off `$volume` set before playback leaked as the default for every subsequent session. `$play` now consumes and clears it (0 preserved) like `rplay`/`uplay` (`commands/play.js`).
+- **Invidious instance cache never cached** — `vplay`'s Invidious resolver never stamped its cache timestamp, forcing a fresh 8s registry fetch on every video request (`commands/vplay.js`).
+- **`ALLOWED` env parsed as a string** — Normalized to a trimmed array to match the file/default config branches (`index.js`).
+
+### Video streaming (`$vplay`)
+- **Removed event-loop-blocking debug logging** — The camera/screenshare path was emitting hundreds of synchronous `console.log` lines per second (server-wide voice-state JSON dumps, per-frame `[DAVE VIDEO STATE]`, per-packet `[DAVE DEBUG]`). On Windows these block the event loop that paces UDP video packets. The raw-gateway listener is now guild-scoped and minimal, and the per-frame/packet debug blocks are disabled (`commands/vplay.js`, `patch-stream.js`).
+- **Camera tuning** — Output capped to a steady 30fps and the camera video bitrate floor raised (600 → 1500 kbps) for cleaner playback on dark/complex scenes (`commands/vplay.js`).
+
+### Hardening
+- `.gitignore` now excludes `cookies.txt` and other local runtime artifacts so secrets never reach the repo.
 
 ---
 

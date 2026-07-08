@@ -1,27 +1,32 @@
 const strings = require("../strings.json");
 const utils = require("../utils");
 
-/** 
- * @description Loop the current song
- * @param {Discord.Client} client the client thats runs the commands
- * @param {Discord.Message} message the command's message
- * @param {Array<String>}args useless here  
+/**
+ * @description Toggle looping of the currently playing song.
+ * @param {Discord.Client} client
+ * @param {Discord.Message} message
+ * @param {Array<String>} args unused
  */
 module.exports.run = async (client, message, args) => {
 
-    const serverQueue = queue.get("queue");
+    const serverQueue = global.queue.get("queue");
 
-    if(!serverQueue){return message.channel.send(strings.cantLoop);};
+    if (!serverQueue || !serverQueue.songs || serverQueue.songs.length === 0) {
+        try { await message.channel.send(strings.cantLoop); } catch (_) {}
+        return;
+    }
 
-    if(serverQueue.loop === false) {
+    const currentTitle = (serverQueue.songs[0] && serverQueue.songs[0].title) || "current track";
+
+    if (serverQueue.loop === false) {
         serverQueue.loop = true;
-        utils.log(`Started looping : ${serverQueue.songs[0].title}`);
-        message.channel.send(strings.loopOn.replace("SONG_TITLE", serverQueue.songs[0].title));
+        utils.log(`Started looping : ${currentTitle}`);
+        try { await message.channel.send(strings.loopOn.replace("SONG_TITLE", currentTitle)); } catch (_) {}
     } else {
         serverQueue.loop = false;
-        utils.log(`Stopped looping : ${serverQueue.songs[0].title}`);
-        message.channel.send(strings.loopOff.replace("SONG_TITLE", serverQueue.songs[0].title));
-    };
+        utils.log(`Stopped looping : ${currentTitle}`);
+        try { await message.channel.send(strings.loopOff.replace("SONG_TITLE", currentTitle)); } catch (_) {}
+    }
 };
 
 module.exports.names = {

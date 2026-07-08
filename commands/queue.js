@@ -11,7 +11,7 @@ const TRACKS_PER_PAGE = 10;
  */
 module.exports.run = async (client, message, args) => {
 
-    const serverQueue = queue.get("queue");
+    const serverQueue = global.queue.get("queue");
 
     if(!serverQueue || !serverQueue.songs || serverQueue.songs.length === 0){
         return message.channel.send(strings.noSongsQueued);

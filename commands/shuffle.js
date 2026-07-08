@@ -9,7 +9,7 @@ const utils = require("../utils");
  */
 module.exports.run = async (client, message, args) => {
 
-    const serverQueue = queue.get("queue");
+    const serverQueue = global.queue.get("queue");
 
     if (!serverQueue || !serverQueue.songs || serverQueue.songs.length <= 2) {
         return message.channel.send("❌ Not enough songs in the queue to shuffle (need at least 2 queued tracks).");

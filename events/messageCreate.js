@@ -1,7 +1,6 @@
-const strings = require('../strings.json')
 const utils = require('../utils')
 
-module.exports = (client, message) => {
+module.exports = async (client, message) => {
     // Ignore own messages
     if (message.author.id === client.user.id) return;
 
@@ -20,10 +19,10 @@ module.exports = (client, message) => {
         // In servers: must mention the bot
         if (!message.content.startsWith(botMention) && !message.content.startsWith(botMentionNick)) return;
 
-        // Only the owner can use this bot
-        if (message.author.id !== global.config.owner) {
-            return message.channel.send(strings.permissionDenied);
-        }
+        // Only the owner can use this bot — silently ignore non-owners so we don't
+        // (a) hand attackers a rate-limit / spam vector, and
+        // (b) advertise the account as a selfbot every time someone pings it.
+        if (message.author.id !== global.config.owner) return;
 
         // Remove the mention and parse command
         content = message.content.replace(botMention, '').replace(botMentionNick, '').trim();
@@ -31,7 +30,7 @@ module.exports = (client, message) => {
 
     if (!content) return;
 
-    const args = content.split(/ +/g);
+    const args = content.split(/\s+/g);
     const command = args.shift().toLowerCase();
     const cmd = client.commands.get(command);
     if (!cmd) return;
@@ -43,5 +42,13 @@ module.exports = (client, message) => {
     }
 
     utils.log(`${message.author.username} ran command: ${command} ${args.join(' ')} ${isDM ? '(via DM)' : ''}`);
-    cmd.run(client, message, args);
+
+    // Await the command and swallow errors here so a bug in one command
+    // never becomes an unhandled promise rejection that crashes the process.
+    try {
+        await cmd.run(client, message, args);
+    } catch (e) {
+        utils.log(`[CMD ERROR] ${command} threw: ${e && e.stack ? e.stack : e}`);
+        try { await message.channel.send(`❌ Command \`${command}\` errored: ${e && e.message ? e.message : e}`); } catch (_) {}
+    }
 };

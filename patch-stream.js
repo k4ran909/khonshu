@@ -6,6 +6,16 @@ const baseMediaPacketizerPath = path.join(__dirname, 'node_modules', '@gabrielma
 const videoPacketizerAnnexBPath = path.join(__dirname, 'node_modules', '@gabrielmaialva33', 'discord-video-stream', 'dist', 'src', 'client', 'packet', 'video_packetizer_annex_b.js');
 const newApiPath = path.join(__dirname, 'node_modules', '@gabrielmaialva33', 'discord-video-stream', 'dist', 'src', 'media', 'new_api.js');
 
+// Booting with broken DAVE patches is worse than not booting at all — video
+// silently fails or, worse, streams unencrypted. Turn every "could not find
+// target pattern" into a hard exit so npm-install-followed-by-boot notices the
+// mismatch immediately instead of running for weeks with silent breakage.
+function fatalPatchError(msg) {
+    console.error(msg);
+    console.error('[PATCH] Refusing to boot with a broken DAVE E2EE patch. Verify the discord-video-stream version matches what patch-stream.js expects.');
+    process.exit(1);
+}
+
 console.log('[PATCH] Starting DAVE E2EE patcher for all connections...');
 
 // ─── 1. Patch base_media_connection.js ───
@@ -176,7 +186,7 @@ if (fs.existsSync(baseMediaConnectionPath)) {
     fs.writeFileSync(baseMediaConnectionPath, content, 'utf8');
     console.log('[PATCH] base_media_connection.js patched successfully!');
 } else {
-    console.log('[PATCH] Error: base_media_connection.js not found!');
+    fatalPatchError('[PATCH] Error: base_media_connection.js not found!');
 }
 
 // ─── 2. Patch base_media_packetizer.js ───
@@ -192,7 +202,7 @@ if (fs.existsSync(baseMediaPacketizerPath)) {
         const dave = this._mediaUdp.mediaConnection._daveSession;
         if (dave && dave.protocolVersion > 0) {
             try {
-                if (Math.random() < 0.01) {
+                if (false) { // DEBUG disabled: per-packet console.log blocks the event loop
                     console.log('[DAVE DEBUG]', this._mediaUdp.mediaConnection.constructor.name, 'SSRC:', this._ssrc, 'Session Ready:', !!(dave.session && dave.session.ready));
                 }
                 let mediaType = 0; // AUDIO
@@ -269,7 +279,7 @@ if (fs.existsSync(baseMediaPacketizerPath)) {
     } else if (content.includes('// Check if DAVE E2EE is active and ready (only for audio since video is encrypted before packetization)')) {
         console.log('[PATCH] base_media_packetizer.js is already patched for audio-only encryption.');
     } else {
-        console.log('[PATCH] Error: Could not find target pattern in base_media_packetizer.js!');
+        fatalPatchError('[PATCH] Error: Could not find target pattern in base_media_packetizer.js!');
     }
 }
 
@@ -279,19 +289,23 @@ if (fs.existsSync(videoPacketizerAnnexBPath)) {
 
     const newPatched = `    async sendFrame(frame, frametime) {
         super.sendFrame(frame, frametime);
-        
+        // Note: \`extensions\` is imported at the top of this file from '../../utils.js'
+        // (\`export const extensions = [{ id: 5, len: 2, val: 0 }]\`). We reference it
+        // directly below — do NOT shadow it with a local declaration; an empty array
+        // would strip the RTP header marker Discord relies on for frame boundaries.
+
         const dave = this.mediaUdp.mediaConnection._daveSession;
         let codec = 4; // H264
         if (this._payloadType === 103) { // H265
             codec = 5;
         }
         
-        if (Math.random() < 0.05) {
-            console.log('[DAVE VIDEO STATE]', 
-                'SSRC:', this._ssrc, 
-                'Dave exists:', !!dave, 
-                'Dave protocol:', dave?.protocolVersion, 
-                'Session exists:', !!dave?.session, 
+        if (false) { // DEBUG disabled: per-frame console.log blocks the event loop and stalls video
+            console.log('[DAVE VIDEO STATE]',
+                'SSRC:', this._ssrc,
+                'Dave exists:', !!dave,
+                'Dave protocol:', dave?.protocolVersion,
+                'Session exists:', !!dave?.session,
                 'Session ready:', !!dave?.session?.ready
             );
         }
@@ -357,19 +371,27 @@ if (fs.existsSync(videoPacketizerAnnexBPath)) {
     const sendFrameRegex = /async sendFrame\([\s\S]*?await this\.onFrameSent[\s\S]*?\n\s*?\}/;
 
     if (sendFrameRegex.test(content)) {
-        // If it's already patched with our specific new code, skip
-        if (content.includes('frame = dave.session.encrypt(1, codec, frame);')) {
+        // Idempotency: check for a marker in the current-good body. If a previous
+        // (incorrectly self-fixed) install landed with `const extensions = [];`
+        // shadowing the module-level import, force a re-patch.
+        const currentMarker = "Note: `extensions` is imported at the top of this file";
+        const shadowedBrokenMarker = /^\s*const extensions = \[\];\s*$/m;
+        const alreadyGood = content.includes(currentMarker) && !shadowedBrokenMarker.test(content);
+        if (alreadyGood) {
             console.log('[PATCH] video_packetizer_annex_b.js is already patched with frame-level E2EE.');
         } else {
+            if (shadowedBrokenMarker.test(content)) {
+                console.log('[PATCH] Detected shadowed-extensions patch. Re-patching to use the module-level import.');
+            }
             content = content.replace(sendFrameRegex, newPatched);
             fs.writeFileSync(videoPacketizerAnnexBPath, content, 'utf8');
             console.log('[PATCH] video_packetizer_annex_b.js patched successfully with frame-level E2EE!');
         }
     } else {
-        console.log('[PATCH] Error: Could not find sendFrame method in video_packetizer_annex_b.js!');
+        fatalPatchError('[PATCH] Error: Could not find sendFrame method in video_packetizer_annex_b.js!');
     }
 } else {
-    console.log('[PATCH] Error: video_packetizer_annex_b.js not found!');
+    fatalPatchError('[PATCH] Error: video_packetizer_annex_b.js not found!');
 }
 
 // ─── 4. Patch new_api.js ───
@@ -402,10 +424,10 @@ if (fs.existsSync(newApiPath)) {
     } else if (content.includes('ffmpeg().input(input).inputOption')) {
         console.log('[PATCH] new_api.js is already patched with correct DirectShow capture.');
     } else {
-        console.log('[PATCH] Error: Could not find target pattern in new_api.js!');
+        fatalPatchError('[PATCH] Error: Could not find target pattern in new_api.js!');
     }
 } else {
-    console.log('[PATCH] Error: new_api.js not found!');
+    fatalPatchError('[PATCH] Error: new_api.js not found!');
 }
 
 console.log('[PATCH] All patches applied successfully!');

@@ -101,7 +101,8 @@ if (!process.env.ALLOWED){
     global.config.allowed=[]
   }
 } else{
-  global.config.allowed=process.env.ALLOWED
+  // Normalize to an array to match the file/default branches (comma-separated env value).
+  global.config.allowed = process.env.ALLOWED.split(",").map(s => s.trim()).filter(Boolean)
 }
 
 client.login(global.config.token)

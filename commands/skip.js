@@ -9,7 +9,7 @@ const utils = require("../utils");
  */
 module.exports.run = async (client, message, args) => {
 
-    const serverQueue = queue.get("queue");
+    const serverQueue = global.queue.get("queue");
     if(!serverQueue || !serverQueue.songs || serverQueue.songs.length === 0){return message.channel.send(strings.nothingPlaying);};
 
     utils.log(`Skipped music : ${serverQueue.songs[0].title}`);

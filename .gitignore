@@ -105,3 +105,7 @@ dist
 
 # TernJS port file
 .tern-port
+
+# Runtime secrets / local artifacts — never commit these
+cookies.txt
+g

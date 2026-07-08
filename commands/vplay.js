@@ -148,7 +148,7 @@ module.exports.run = async (client, message, args) => {
     }
 
     // Clean up any existing voice session to prevent conflict (audio or video)
-    const existingQueue = queue.get("queue");
+    const existingQueue = global.queue.get("queue");
     if (existingQueue) {
         utils.log("[VPLAY] Stopping existing active queue to start video stream.");
         // Clear auto-disconnect timer
@@ -181,7 +181,7 @@ module.exports.run = async (client, message, args) => {
         if (existingQueue.connection) {
             try { existingQueue.connection.destroy(); } catch (e) {}
         }
-        queue.delete("queue");
+        global.queue.delete("queue");
     }
 
     // Dynamic ESM imports
@@ -213,7 +213,7 @@ module.exports.run = async (client, message, args) => {
         streamPlay: null,
         disconnectTimer: null
     };
-    queue.set("queue", queueConstruct);
+    global.queue.set("queue", queueConstruct);
 
     try {
         utils.log(`[VPLAY] Connecting streamer to voice channel: ${voiceChannel.name} (${voiceChannel.id})`);
@@ -221,10 +221,15 @@ module.exports.run = async (client, message, args) => {
         // 2-second delay to ensure previous voice gateway state changes are fully processed
         await new Promise(resolve => setTimeout(resolve, 2000));
 
-        // Register raw listener to inspect gateway packets
+        // Register raw listener to inspect gateway packets — only for THIS guild, and
+        // without dumping the full member JSON. The old version logged every
+        // VOICE_STATE_UPDATE server-wide (hundreds during connect); those synchronous
+        // stdout writes block the event loop that has to push UDP video packets on time,
+        // which stalls/blackscreens the camera feed. Keep it minimal and guild-scoped.
         const rawListener = (packet) => {
-            if (packet.t === 'VOICE_STATE_UPDATE' || packet.t === 'VOICE_SERVER_UPDATE') {
-                utils.log(`[VPLAY RAW DEBUG] Gateway received ${packet.t}: ${JSON.stringify(packet.d)}`);
+            if ((packet.t === 'VOICE_STATE_UPDATE' || packet.t === 'VOICE_SERVER_UPDATE')
+                && packet.d && packet.d.guild_id === voiceChannel.guild.id) {
+                utils.log(`[VPLAY] Gateway ${packet.t} for guild ${packet.d.guild_id}`);
             }
         };
         client.on('raw', rawListener);
@@ -235,7 +240,7 @@ module.exports.run = async (client, message, args) => {
         client.off('raw', rawListener);
 
         async function startStreaming() {
-            const currentQueue = queue.get("queue");
+            const currentQueue = global.queue.get("queue");
             if (!currentQueue || !currentQueue.playing) return;
 
             utils.log(`[VPLAY] Preparing video transcode stream from URL: ${directUrl.substring(0, 200)}...`);
@@ -243,8 +248,13 @@ module.exports.run = async (client, message, args) => {
                 videoCodec: "H264",
                 width: useCamera ? 640 : 1280,   // 360p for webcam square, 720p for screenshare!
                 height: useCamera ? 360 : 720,
-                bitrateVideo: useCamera ? 600 : 2000, // lower bitrate for webcam
-                bitrateVideoMax: useCamera ? 1000 : 3000,
+                // Cap ffmpeg's output to a steady 30fps. Without this, prepareStream
+                // skips fpsOutput and passes source (often variable) framerate straight
+                // through, which spikes CPU and can hitch the feed. Lower CPU here also
+                // means the event loop keeps up with UDP packet pacing.
+                frameRate: 30,
+                bitrateVideo: useCamera ? 1500 : 2500, // higher floor so the feed isn't near-black on dark content
+                bitrateVideoMax: useCamera ? 2500 : 4000,
                 bitrateAudio: 128,
                 includeAudio: true,
                 h26xPreset: "ultrafast",        // Use ultrafast for minimum CPU overhead!
@@ -264,7 +274,7 @@ module.exports.run = async (client, message, args) => {
             command.on("error", (err) => {
                 if (err.message && (err.message.includes("SIGKILL") || err.message.includes("kill"))) return;
                 utils.log(`[VPLAY FFMPEG ERROR] ${err.message}`);
-                const checkQueue = queue.get("queue");
+                const checkQueue = global.queue.get("queue");
                 if (checkQueue && !checkQueue.loop) {
                     try { message.channel.send(`❌ Video transcode error: ${err.message}`); } catch (e) {}
                 }
@@ -272,7 +282,7 @@ module.exports.run = async (client, message, args) => {
 
             promise.then(async () => {
                 utils.log("[VPLAY] Video stream playback finished.");
-                const checkQueue = queue.get("queue");
+                const checkQueue = global.queue.get("queue");
                 if (checkQueue && checkQueue.isVideo) {
                     if (checkQueue.loop) {
                         utils.log(`[VPLAY] Looping enabled, restarting stream for: ${title}`);
@@ -280,13 +290,13 @@ module.exports.run = async (client, message, args) => {
                         startStreaming();
                     } else {
                         try { streamer.leaveVoice(); } catch (e) {}
-                        queue.delete("queue");
+                        global.queue.delete("queue");
                         try { message.channel.send("📺 Video streaming has finished."); } catch (e) {}
                     }
                 }
             }).catch(async (err) => {
                 utils.log(`[VPLAY PROMISE ERROR] ${err.message}`);
-                const checkQueue = queue.get("queue");
+                const checkQueue = global.queue.get("queue");
                 if (checkQueue && checkQueue.isVideo && checkQueue.loop) {
                     utils.log("[VPLAY] Error during playback but looping enabled. Retrying in 2 seconds...");
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -310,7 +320,7 @@ module.exports.run = async (client, message, args) => {
     } catch (err) {
         console.error("[VPLAY] Error during connection or streaming:", err);
         try { streamer.leaveVoice(); } catch (e) {}
-        queue.delete("queue");
+        global.queue.delete("queue");
         return message.channel.send("❌ Failed to initiate video stream.");
     }
 };
@@ -433,6 +443,7 @@ async function getActiveInvidiousInstances() {
                 .slice(0, 8);
             if (parsed.length > 0) {
                 _vCachedInvidious = parsed.length >= 3 ? parsed : [...new Set([...parsed, ...fallbacks])];
+                _vCacheTime = Date.now();
                 console.log(`[VPLAY FALLBACK] Found ${_vCachedInvidious.length} active Invidious instances (API enabled)`);
                 return _vCachedInvidious;
             }
@@ -441,6 +452,7 @@ async function getActiveInvidiousInstances() {
         console.log(`[VPLAY FALLBACK] Failed to fetch Invidious registry: ${e.message}`);
     }
     _vCachedInvidious = fallbacks;
+    _vCacheTime = Date.now();
     return _vCachedInvidious;
 }
 
@@ -448,7 +460,7 @@ function parseCookieFile() {
     try {
         const fs = require('fs');
         const path = require('path');
-        const cookiePath = path.join(process.cwd(), 'cookies.txt');
+        const cookiePath = path.join(__dirname, '..', 'cookies.txt');
         if (!fs.existsSync(cookiePath)) return null;
         const content = fs.readFileSync(cookiePath, 'utf8');
         const cookies = content.split('\n')
@@ -805,7 +817,7 @@ function getDirectVideoUrl(url) {
             "--extractor-args", "youtube:player_client=web,mweb,android"
         ];
 
-        const cookiesPath = path.join(process.cwd(), "cookies.txt");
+        const cookiesPath = path.join(__dirname, '..', "cookies.txt");
         if (fs.existsSync(cookiesPath)) {
             ytdlpArgs.push("--cookies", cookiesPath);
             console.log(`[VPLAY] Using cookies file for yt-dlp at: ${cookiesPath}`);
