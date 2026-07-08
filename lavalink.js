@@ -122,6 +122,9 @@ if (Connectors.DiscordJS) {
 const LAVALINK_HOST = process.env.LAVALINK_HOST || "disabled";
 const LAVALINK_PORT = process.env.LAVALINK_PORT || "19133";
 const LAVALINK_PASS = process.env.LAVALINK_PASSWORD;
+// Most public v4 Lavalink nodes are SSL (wss://, usually port 443). Set
+// LAVALINK_SECURE=true for those; leave unset/false for plain ws:// self-hosted nodes.
+const LAVALINK_SECURE = process.env.LAVALINK_SECURE === "true" || process.env.LAVALINK_SECURE === "1";
 
 // Fail-fast if the host is set but no password is provided. Previously the code
 // defaulted to a hardcoded shared secret and shipped that in the repo.
@@ -135,7 +138,8 @@ if (LAVALINK_HOST !== "disabled" && process.env.DISABLE_LAVALINK !== "true" && !
 const Nodes = [{
     name: "Khonshu",
     url: `${LAVALINK_HOST}:${LAVALINK_PORT}`,
-    auth: LAVALINK_PASS || ""
+    auth: LAVALINK_PASS || "",
+    secure: LAVALINK_SECURE
 }];
 
 let shoukaku = null;
