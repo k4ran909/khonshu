@@ -142,7 +142,15 @@ module.exports.run = async (client, message, args) => {
                 if (!directUrl) throw new Error("No URL returned from yt-dlp");
             } catch (err) {
                 console.error("[VPLAY] Error extracting direct video stream URL:", err);
-                return message.channel.send("❌ Failed to extract direct video stream URL from YouTube. Ensure yt-dlp is updated.");
+                const isBotCheck = /not a bot|Sign in to confirm|cookies/i.test(err && err.message ? err.message : "");
+                if (isBotCheck) {
+                    return message.channel.send(
+                        "❌ YouTube blocked video extraction from this server's IP (\"confirm you're not a bot\").\n" +
+                        "Video streaming needs the raw video file, which Lavalink can't provide (it's audio-only).\n" +
+                        "**Fix:** set the `YOUTUBE_COOKIES` env var (Netscape cookies.txt from a logged-in YouTube session) and redeploy."
+                    );
+                }
+                return message.channel.send("❌ Failed to extract direct video stream URL from YouTube.");
             }
         }
     }
