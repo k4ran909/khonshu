@@ -125,43 +125,45 @@ module.exports.run = async (client, message, args) => {
     // ───────────────────────────────────────
     if (YT_URL_REGEX.test(query)) {
         // Direct YouTube URL
-        let url = query, title, duration;
-        try {
-            const video = await YouTube.getVideo(query);
-            if (video) {
-                title = video.title;
-                duration = Math.floor((video.duration || 0) / 1000);
-            } else {
-                title = "Unknown Track";
-                duration = 0;
-            }
-        } catch (e) {
-            try {
-                const results = await YouTube.search(query, { limit: 1 });
-                if (results && results.length > 0) {
-                    title = results[0].title;
-                    duration = Math.floor(results[0].duration / 1000);
-                } else {
-                    title = "Unknown Track";
-                    duration = 0;
-                }
-            } catch (e2) {
-                title = "Unknown Track";
-                duration = 0;
-            }
-        }
+        let url = query, title = "Unknown Track", duration = 0;
 
-        if (title === "Unknown Track") {
-            utils.log(`[PLAY] YouTube library failed to resolve metadata for direct link. Trying fallback metadata fetcher...`);
+        // When Lavalink is connected it resolves the real title/duration server-side
+        // in ~1s and utils.play backfills it onto the song (and edits the "now playing"
+        // message). So skip the slow youtube-sr + Piped/Invidious/yt-dlp metadata
+        // pre-fetch here — on datacenter IPs that chain wastes 10-18s and usually
+        // fails anyway, delaying the moment audio actually starts.
+        let lavalinkUp = false;
+        try { lavalinkUp = require("../lavalink").isConnected(); } catch (_) {}
+
+        if (!lavalinkUp) {
             try {
-                const meta = await utils.fetchMetadata(url);
-                if (meta && meta.title) {
-                    title = meta.title;
-                    duration = meta.duration;
-                    utils.log(`[PLAY] Fallback metadata lookup success! Title: "${title}", Duration: ${duration}s`);
+                const video = await YouTube.getVideo(query);
+                if (video) {
+                    title = video.title;
+                    duration = Math.floor((video.duration || 0) / 1000);
                 }
-            } catch (metaError) {
-                utils.log(`[PLAY] Fallback metadata lookup failed: ${metaError.message}`);
+            } catch (e) {
+                try {
+                    const results = await YouTube.search(query, { limit: 1 });
+                    if (results && results.length > 0) {
+                        title = results[0].title;
+                        duration = Math.floor(results[0].duration / 1000);
+                    }
+                } catch (e2) {}
+            }
+
+            if (title === "Unknown Track") {
+                utils.log(`[PLAY] YouTube library failed to resolve metadata for direct link. Trying fallback metadata fetcher...`);
+                try {
+                    const meta = await utils.fetchMetadata(url);
+                    if (meta && meta.title) {
+                        title = meta.title;
+                        duration = meta.duration;
+                        utils.log(`[PLAY] Fallback metadata lookup success! Title: "${title}", Duration: ${duration}s`);
+                    }
+                } catch (metaError) {
+                    utils.log(`[PLAY] Fallback metadata lookup failed: ${metaError.message}`);
+                }
             }
         }
 

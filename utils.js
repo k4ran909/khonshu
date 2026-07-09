@@ -903,6 +903,23 @@ module.exports = {
                     const track = await lavalink.searchTrack(song.url);
 
                     if (track) {
+                        // Backfill the real title/duration from Lavalink. When the $play
+                        // pre-fetch was skipped for speed, song.title is still a placeholder
+                        // ("Unknown Track"); replace it and edit the already-sent
+                        // "started playing" / "added to queue" message in place.
+                        try {
+                            if (track.info && track.info.title && song.title !== track.info.title) {
+                                const oldTitle = song.title;
+                                song.title = track.info.title;
+                                if (typeof track.info.length === "number" && track.info.length > 0) {
+                                    song.duration = Math.floor(track.info.length / 1000);
+                                }
+                                if (song._discordMsg && oldTitle) {
+                                    safeEditTitle(song._discordMsg, oldTitle, track.info.title);
+                                }
+                            }
+                        } catch (_) {}
+
                         // Join voice channel via Lavalink/Shoukaku
                         const guildId = (serverQueue.voiceChannel && serverQueue.voiceChannel.guild && serverQueue.voiceChannel.guild.id) || serverQueue.guildId;
                         const channelId = (serverQueue.voiceChannel && serverQueue.voiceChannel.id) || serverQueue.channelId;
