@@ -4,8 +4,7 @@
   "description": "Khonshu Music Bot with DAVE E2EE voice support. Streams audio directly from YouTube via yt-dlp + ffmpeg.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "postinstall": "node patch-stream.js"
+    "start": "node index.js"
   },
   "repository": {
     "type": "git",
@@ -19,7 +18,6 @@
   "homepage": "https://github.com/TheDiscorders/SelfRythm#readme",
   "dependencies": {
     "@discordjs/voice": "^0.19.0",
-    "@gabrielmaialva33/discord-video-stream": "^3.4.0",
     "@snazzah/davey": "latest",
     "ascii-table": "^0.0.9",
     "discord.js-selfbot-v13": "^3.7.1",

@@ -1,10 +1,3 @@
-// Ensure voice/video library is patched for E2EE DAVE
-try {
-  require("./patch-stream.js");
-} catch (e) {
-  console.error("[INIT] Failed to run E2EE patch-stream.js on startup:", e);
-}
-
 // Setup global undici proxy if HTTP_PROXY is defined in environment (Node 20+ fetch support)
 if (process.env.HTTP_PROXY) {
   try {

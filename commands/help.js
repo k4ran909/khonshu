@@ -13,7 +13,6 @@ module.exports.run = async (client, message, args) => {
 
 **🎵 Music**
 \`$play <query/URL>\` \`(p)\` — Play audio from YouTube or Spotify
-\`$vplay <query/URL>\` \`(vp)\` — Stream video via Go Live or Virtual Camera
 \`$stop\` \`(st)\` — Stop music and leave VC
 \`$skip\` \`(s)\` — Skip to the next track
 \`$join\` \`(j)\` — Move bot to your current VC
@@ -37,13 +36,6 @@ _(Filters can be stacked. Runs on ffmpeg pipeline; Lavalink pipeline supports eq
 **🔊 Volume** \`$volume\` \`(v)\`
 \`$volume <0.1 - 10>\` — Set playback volume (1 = 100%)
 \`$volume earrape\` — ⚠ 100× volume for 7s (requires ✅ confirmation)
-
-**🎥 Video Streaming** \`$vplay\` \`(vp)\`
-\`$vplay <query/URL>\` — Default: Go Live screenshare
-\`$vplay -s <query/URL>\` — Screenshare (aliases: \`--screenshare\`, \`--go-live\`, \`--live\`)
-\`$vplay -c <query/URL>\` — Virtual Camera (aliases: \`--camera\`, \`--cam\`)
-\`$vplay obs <query/URL>\` — Route through OBS Virtual Camera device
-\`$vplay camera <query/URL>\` — Same as \`obs\` (shortcut: \`cam\`)
 
 **🎯 Targeted Playback**
 \`$rplay <guildId> <channelId> <query/URL>\` \`(rp, remoteplay)\` — Play in any guild+VC by ID

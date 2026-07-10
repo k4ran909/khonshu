@@ -64,7 +64,6 @@ graph TD
 | Command | Aliases | Description |
 |:---|:---|:---|
 | `$play <query/URL>` | `$p` | Play audio from YouTube search, YouTube URL, or Spotify link |
-| `$vplay <query/URL>` | `$vp` | Stream YouTube video (Go Live screenshare by default) |
 | `$stop` | `$st` | Stop playback, clear queue, and leave VC |
 | `$skip` | `$s` | Skip to the next track in queue |
 | `$join` | `$j` | Move bot to your current VC (resumes playback) |
@@ -96,15 +95,6 @@ graph TD
 | `$volume <0.1 - 10>` | `$v` | Set playback volume (1 = 100%) — works even without a song playing (pre-set) |
 | `$volume earrape` | | Temporary 100× volume blast for 7s (requires ✅ reaction from you) |
 
-### 🎥 Video Streaming Flags (`$vplay` / `$vp`)
-| Form | Description |
-|:---|:---|
-| `$vplay <query/URL>` | Default: Go Live screenshare |
-| `$vplay -s <query/URL>` | Screenshare (aliases: `--screenshare`, `--go-live`, `--live`) |
-| `$vplay -c <query/URL>` | Virtual Camera (aliases: `--camera`, `--cam`) |
-| `$vplay obs <query/URL>` | Route through OBS Virtual Camera device |
-| `$vplay camera <query/URL>` | Same as `obs` (shortcut: `cam`) |
-
 ### 🎯 Targeted Playback
 | Command | Aliases | Description |
 |:---|:---|:---|
@@ -124,33 +114,6 @@ graph TD
 | Command | Aliases | Description |
 |:---|:---|:---|
 | `$help` | `$h`, `$menu`, `$commands` | Show the full command menu |
-
----
-
-## 📺 Video Streaming ($vplay)
-
-Khonshu features a **video streaming engine** that broadcasts high-definition YouTube video streams directly into Discord voice channels. Two output modes:
-
-### 1. 📺 Screenshare Mode — Go Live (Default)
-Streams via Discord's official **Go Live** feature. This is the default when no flag is provided, or when any of `-s`, `--screenshare`, `--go-live`, or `--live` is present.
-```
-$vplay https://youtu.be/4vI3mOS9gIo
-$vp LOFI hiphop radio -s
-$vp https://youtu.be/4vI3mOS9gIo --screenshare
-```
-
-### 2. 📷 Virtual Camera Mode
-Streams video as a Virtual Camera feed over the primary voice channel socket. Activated with `-c`, `--camera`, or `--cam`; also via the `obs` / `camera` / `cam` device shortcuts (which route through an OBS Virtual Camera device on the host).
-```
-$vplay https://youtu.be/4vI3mOS9gIo -c
-$vp LOFI hiphop radio --camera
-$vp obs https://youtu.be/4vI3mOS9gIo
-```
-
-### Key Technical Specs:
-- **Video Format:** H264 AVC (1280x720 @ 30 FPS / 2-3 Mbps)
-- **Audio Format:** High-fidelity secure Opus audio
-- **E2EE Handshake:** Natively encrypted with the DAVE protocol on both primary voice and secondary video streams, preventing black screens or frozen feeds on modern Discord clients.
 
 ---
 
@@ -283,7 +246,6 @@ This is fully transparent — you don't need to configure anything. The library 
 khonshu/
 ├── commands/
 │   ├── play.js        # YouTube + Spotify playback
-│   ├── vplay.js       # YouTube Go Live / Virtual Camera video streaming
 │   ├── stop.js        # Stop and leave VC
 │   ├── skip.js        # Skip current track
 │   ├── join.js        # Move bot to your VC (preserves ffmpeg / Lavalink pipeline)
@@ -301,7 +263,6 @@ khonshu/
 │   ├── messageCreate.js  # Command parser (DM + mention)
 │   └── ready.js          # Startup voice state detection
 ├── index.js           # Bot entry point
-├── patch-stream.js    # DAVE E2EE video/voice patcher script
 ├── utils.js           # Audio pipeline, voice, DSP filters
 ├── lavalink.js        # Optional Shoukaku / Lavalink integration
 ├── config.js          # Local config (gitignored)
@@ -320,15 +281,10 @@ Recent fixes and improvements on the `dev` branch:
 
 ### Bug fixes
 - **ffmpeg fallback with no voice connection** — When Lavalink reported connected but failed to resolve/join a track, playback fell through to the ffmpeg pipeline with a `null` voice connection, so audio played to nowhere while the queue silently advanced. The fallback now establishes a voice connection on demand (`utils.js`).
-- **Cookie path mismatch** — Cookies were written to the project root (`__dirname`) but read from `process.cwd()`, so auth silently broke when the process was launched from another working directory. All readers now anchor to the project root (`utils.js`, `commands/vplay.js`).
+- **Cookie path mismatch** — Cookies were written to the project root (`__dirname`) but read from `process.cwd()`, so auth silently broke when the process was launched from another working directory. All readers now anchor to the project root (`utils.js`).
 - **`$help` / `$menu` never sent** — The menu exceeded Discord's 2000-character message limit and threw `Invalid Form Body` every time. It's now split into multiple messages on section boundaries (`commands/help.js`).
 - **`pendingVolume` leak** — A one-off `$volume` set before playback leaked as the default for every subsequent session. `$play` now consumes and clears it (0 preserved) like `rplay`/`uplay` (`commands/play.js`).
-- **Invidious instance cache never cached** — `vplay`'s Invidious resolver never stamped its cache timestamp, forcing a fresh 8s registry fetch on every video request (`commands/vplay.js`).
 - **`ALLOWED` env parsed as a string** — Normalized to a trimmed array to match the file/default config branches (`index.js`).
-
-### Video streaming (`$vplay`)
-- **Removed event-loop-blocking debug logging** — The camera/screenshare path was emitting hundreds of synchronous `console.log` lines per second (server-wide voice-state JSON dumps, per-frame `[DAVE VIDEO STATE]`, per-packet `[DAVE DEBUG]`). On Windows these block the event loop that paces UDP video packets. The raw-gateway listener is now guild-scoped and minimal, and the per-frame/packet debug blocks are disabled (`commands/vplay.js`, `patch-stream.js`).
-- **Camera tuning** — Output capped to a steady 30fps and the camera video bitrate floor raised (600 → 1500 kbps) for cleaner playback on dark/complex scenes (`commands/vplay.js`).
 
 ### Hardening
 - `.gitignore` now excludes `cookies.txt` and other local runtime artifacts so secrets never reach the repo.

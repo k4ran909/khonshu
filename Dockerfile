@@ -25,7 +25,7 @@ RUN chown -R node:node /app
 USER node
 
 # Copy dependency files first with correct ownership
-COPY --chown=node:node package.json package-lock.json patch-stream.js ./
+COPY --chown=node:node package.json package-lock.json ./
 
 # Install node dependencies
 RUN npm ci --omit=dev

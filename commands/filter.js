@@ -46,7 +46,7 @@ module.exports.run = async (client, message, args) => {
         return;
     }
 
-    // Initialize filters array if not exists (vplay.js and older queue constructors omit it).
+    // Initialize filters array if not exists (older queue constructors omit it).
     if (!serverQueue.filters) serverQueue.filters = [];
 
     // No args — show current status
