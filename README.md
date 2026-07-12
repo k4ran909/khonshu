@@ -142,15 +142,20 @@ $activity custom just vibing     → custom status (no verb)
 ### 🎭 Profile Clone (`$clone`) — owner only
 Copy another user's profile onto the bot account: **display name, avatar, banner, accent color, and bio/About Me**. Your original profile is backed up to `profile-backup.json` on the first clone so you can revert.
 
+Name / avatar / banner / accent are read from the **[Discord-pfp-api](https://github.com/SaeedX302/Discord-pfp-api)** (server-side bot-token lookup, so it works for **any** user — no mutual server needed). Bio is read separately from Discord's profile endpoint.
+
 | Command | Description |
 |:---|:---|
 | `$clone <userID>` | Clone the target's profile (accepts a raw ID or `@mention`) |
 | `$clone restore` | Revert the account to your original (pre-clone) profile |
 
+**Config:** `PFP_API_BASE` (env, optional) — base URL of the profile API. Defaults to `http://discord.tsunstudio.pw`; point it at your own instance of Discord-pfp-api if you self-host.
+
 > **Caveats:**
-> - **Bio and banner** can only be read when you share a mutual server with the target, are friends, or have a pending friend request (Discord API restriction). Name, avatar, and accent color always work.
+> - **Bio/About Me** is only readable when you share a mutual server with the target, are friends, or have a pending friend request (the pfp-API does **not** expose bio — Discord bots can't read it). Name, avatar, banner, and accent always work.
 > - Only the **display name** (`global_name`) is cloned — the `@username` handle is not, as changing it requires your account password and is limited to 2 changes/hour.
-> - Avatar/banner edits are rate-limited by Discord; avoid rapid repeated clones.
+> - A **banner** can only be *set* if your own account has **Nitro** (skipped cleanly otherwise).
+> - Profile writes (name/avatar/bio) can be **captcha-blocked** by Discord's anti-automation — common on VPS/datacenter IPs. Running the bot from a residential IP usually avoids it.
 
 ### ℹ️ Info
 | Command | Aliases | Description |
