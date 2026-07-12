@@ -626,6 +626,31 @@ module.exports = {
     isFloat: function(n) {
         return ((typeof n==='number')&&(n%1!==0));
     },
+    /**
+     * @description Validates that a string is a plausible Discord snowflake (17-20 digits).
+     * @param {String} id
+     */
+    isSnowflake: function (id) {
+        return typeof id === "string" && /^\d{17,20}$/.test(id);
+    },
+    /**
+     * @description Persist the current global.config.allowed array to allowed.json
+     * at the project root (anchored to __dirname, not process.cwd(), so it works
+     * no matter where the process was launched from). Returns true on success.
+     * @param {Array<String>} [list] Optional list to write; defaults to global.config.allowed.
+     */
+    saveAllowed: function (list) {
+        try {
+            const fs = require("fs");
+            const arr = Array.isArray(list) ? list : (global.config && global.config.allowed) || [];
+            const payload = JSON.stringify({ allowed: arr }, null, 2) + "\n";
+            fs.writeFileSync(path.join(__dirname, "allowed.json"), payload, "utf8");
+            return true;
+        } catch (e) {
+            this.log(`[SUDO] Failed to persist allowed.json: ${e && e.message ? e.message : e}`);
+            return false;
+        }
+    },
     log: function(content) {
         // NOTE: previously this function assigned every local (`date_ob`, `date`,
         // `month`, `year`, `dmy`, `hms`) without `let`/`const`, leaking them to the

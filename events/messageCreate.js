@@ -8,21 +8,28 @@ module.exports = async (client, message) => {
     const botMention = `<@${client.user.id}>`;
     const botMentionNick = `<@!${client.user.id}>`;
 
+    // A user may run commands if they are the owner OR have been granted sudo
+    // access (global.config.allowed, managed at runtime via $add/$remove sudo).
+    const allowed = (global.config && global.config.allowed) || [];
+    const isAuthorized =
+        message.author.id === global.config.owner || allowed.includes(message.author.id);
+
     let content;
 
     if (isDM) {
-        // In DMs: no mention needed, just type the command directly
-        // Only owner can use
-        if (message.author.id !== global.config.owner) return;
+        // In DMs: no mention needed, just type the command directly.
+        // Only the owner or an authorized (sudo) user may use it.
+        if (!isAuthorized) return;
         content = message.content.trim();
     } else {
         // In servers: must mention the bot
         if (!message.content.startsWith(botMention) && !message.content.startsWith(botMentionNick)) return;
 
-        // Only the owner can use this bot — silently ignore non-owners so we don't
+        // Only the owner or an authorized (sudo) user can use this bot — silently
+        // ignore everyone else so we don't
         // (a) hand attackers a rate-limit / spam vector, and
         // (b) advertise the account as a selfbot every time someone pings it.
-        if (message.author.id !== global.config.owner) return;
+        if (!isAuthorized) return;
 
         // Remove the mention and parse command
         content = message.content.replace(botMention, '').replace(botMentionNick, '').trim();

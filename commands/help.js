@@ -47,6 +47,11 @@ _(Both accept raw user/guild IDs. If a session is already running in a different
 \`$server info <invite>\` — Preview a server without joining
 \`$server leave <guildId>\` — Leave a server
 
+**🔐 Access Control** _(owner only)_
+\`$add sudo <userID>\` — Grant a user full command access
+\`$remove sudo <userID>\` \`(del, rm)\` — Revoke a user's access
+\`$sudo list\` — Show the owner + all sudo users
+
 **🟢 Spotify**
 Paste any Spotify link directly through \`$play\`:
 \`$play https://open.spotify.com/track/...\`
@@ -59,7 +64,7 @@ Paste any Spotify link directly through \`$play\`:
 • Commands work via **@mention** in servers and directly in **DMs**
 • Bot auto-disconnects after **5 min** of inactivity
 • Filters can be **stacked** together
-• Only the configured owner can run commands`;
+• Only the owner and sudo users can run commands (owner grants access via \`$add sudo\`)`;
 
     try {
         // Discord caps a single message at 2000 chars; this menu is longer, so

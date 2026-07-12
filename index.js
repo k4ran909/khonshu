@@ -88,14 +88,21 @@ if (!process.env.TOKEN){
     'owner': process.env.OWNER || ""
   };
 }
-if (!process.env.ALLOWED){
-  try {global.config.allowed=require("./allowed.json").allowed}
-  catch (e){
-    global.config.allowed=[]
-  }
-} else{
-  // Normalize to an array to match the file/default branches (comma-separated env value).
-  global.config.allowed = process.env.ALLOWED.split(",").map(s => s.trim()).filter(Boolean)
+// Build the allowed (sudo) list by MERGING two sources so runtime grants survive
+// restarts and env-configured users are never dropped:
+//   1. allowed.json at the project root — written by $add/$remove sudo at runtime
+//   2. the ALLOWED env var (comma-separated) — static deploy-time config
+// The merged, de-duplicated result is what the authorization gate checks.
+{
+  let fromFile = [];
+  try { fromFile = require("./allowed.json").allowed || []; }
+  catch (e) { fromFile = []; }
+
+  const fromEnv = process.env.ALLOWED
+    ? process.env.ALLOWED.split(",").map(s => s.trim()).filter(Boolean)
+    : [];
+
+  global.config.allowed = [...new Set([...fromFile, ...fromEnv])];
 }
 
 client.login(global.config.token)

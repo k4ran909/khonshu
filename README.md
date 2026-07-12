@@ -110,6 +110,17 @@ graph TD
 
 > **Note:** Auto-accepting invites via the API is disabled — Discord treats it as a selfbot detection signal. Use `$server info <invite>` to preview, then join manually from your Discord client.
 
+### 🔐 Access Control (`$add` / `$remove` / `$sudo`) — owner only
+By default only the configured owner can run commands. The owner can grant other users full access ("sudo"). Grants persist to `allowed.json` and survive restarts.
+
+| Command | Aliases | Description |
+|:---|:---|:---|
+| `$add sudo <userID>` | | Grant a user full command access (accepts a raw ID or `@mention`) |
+| `$remove sudo <userID>` | `$del`, `$rm` | Revoke a user's access |
+| `$sudo list` | | Show the owner and all sudo users |
+
+> Sudo users can run every command **except** access management — only the owner can grant or revoke sudo.
+
 ### ℹ️ Info
 | Command | Aliases | Description |
 |:---|:---|:---|
@@ -258,6 +269,9 @@ khonshu/
 │   ├── rplay.js       # Remote play in any guild+VC by ID
 │   ├── uplay.js       # Jump to a target user's VC and play
 │   ├── server.js      # List/info/leave servers (no auto-accept invites)
+│   ├── add.js         # Grant sudo access ($add sudo <id>) — owner only
+│   ├── remove.js      # Revoke sudo access ($remove sudo <id>) — owner only
+│   ├── sudo.js        # List owner + sudo users ($sudo list) — owner only
 │   └── help.js        # Full command menu
 ├── events/
 │   ├── messageCreate.js  # Command parser (DM + mention)
