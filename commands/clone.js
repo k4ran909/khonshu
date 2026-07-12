@@ -6,46 +6,51 @@ const BACKUP_FILE = path.join(__dirname, "..", "profile-backup.json");
 
 // Discord "Bio" and "About Me" are the same single field. The profile endpoint
 // returns it under user_profile.bio.
+//
+// IMPORTANT: selfbots (user accounts) must NOT call GET /users/:id — that route
+// is bot-only and returns 401 Unauthorized for user tokens. The user-account-safe
+// route is GET /users/:id/profile, which returns the user object *plus* bio and
+// banner in one call. We build everything from that response.
+function cdnAvatar(id, hash) {
+    if (!hash) return null;
+    const ext = hash.startsWith("a_") ? "gif" : "png";
+    return `https://cdn.discordapp.com/avatars/${id}/${hash}.${ext}?size=1024`;
+}
+function cdnBanner(id, hash) {
+    if (!hash) return null;
+    const ext = hash.startsWith("a_") ? "gif" : "png";
+    return `https://cdn.discordapp.com/banners/${id}/${hash}.${ext}?size=1024`;
+}
+
 async function fetchTargetProfile(client, id) {
-    // Basic user object gives username, global_name, avatar, banner, accent_color.
-    const user = await client.users.fetch(id, { force: true });
+    // Hit the profile endpoint directly. with_mutual_guilds helps the request
+    // resolve when the relationship is via a shared server.
+    const profile = await client.api.users(id).profile.get({
+        query: { with_mutual_guilds: true, with_mutual_friends: false }
+    });
 
-    const out = {
-        id: user.id,
-        username: user.username,
-        globalName: user.globalName || null,
-        avatarURL: user.avatarURL ? user.avatarURL({ format: "png", size: 1024, dynamic: true }) : null,
-        bannerURL: null,
-        accentColor: typeof user.accentColor === "number" ? user.accentColor : null,
-        bio: null,
-        profileReadable: false
+    const u = (profile && profile.user) || {};
+    const up = (profile && profile.user_profile) || {};
+
+    const avatarHash = u.avatar || null;
+    const bannerHash = up.banner || u.banner || null;
+    const accent = typeof up.accent_color === "number" ? up.accent_color
+        : typeof u.accent_color === "number" ? u.accent_color : null;
+    const bio = typeof up.bio === "string" ? up.bio
+        : typeof u.bio === "string" ? u.bio : null;
+
+    return {
+        id: u.id || id,
+        username: u.username || "unknown",
+        globalName: u.global_name || null,
+        avatarURL: cdnAvatar(u.id || id, avatarHash),
+        bannerURL: cdnBanner(u.id || id, bannerHash),
+        accentColor: accent,
+        bio: bio,
+        // If we got here the profile was readable (bio/banner are present or empty,
+        // not blocked). A 401/403 would have thrown before reaching this point.
+        profileReadable: true
     };
-
-    // Bio + banner require a profile fetch, which only works with a mutual
-    // guild / friendship / pending request. Degrade gracefully if it fails.
-    try {
-        const profile = await user.getProfile();
-        out.profileReadable = true;
-        if (profile && profile.user_profile && typeof profile.user_profile.bio === "string") {
-            out.bio = profile.user_profile.bio;
-        } else if (profile && typeof profile.bio === "string") {
-            out.bio = profile.bio;
-        }
-        // Prefer the banner hash from the profile payload if the basic object lacked one.
-        const pUser = profile && profile.user;
-        if (pUser && pUser.banner) {
-            out.bannerURL = `https://cdn.discordapp.com/banners/${user.id}/${pUser.banner}.${pUser.banner.startsWith("a_") ? "gif" : "png"}?size=1024`;
-        }
-    } catch (e) {
-        utils.log(`[CLONE] Could not read full profile for ${id} (no mutual guild/friend?): ${e && e.message ? e.message : e}`);
-    }
-
-    // Fall back to the banner from the basic user object if present.
-    if (!out.bannerURL && user.banner) {
-        try { out.bannerURL = user.bannerURL({ format: "png", size: 1024, dynamic: true }); } catch (_) {}
-    }
-
-    return out;
 }
 
 // Snapshot the bot's own current profile so it can be restored later.
@@ -143,7 +148,21 @@ module.exports.run = async (client, message, args) => {
     try {
         target = await fetchTargetProfile(client, id);
     } catch (e) {
-        try { await message.channel.send(`❌ Couldn't fetch that user: ${e && e.message ? e.message : e}`); } catch (_) {}
+        // The profile endpoint 401/403s when you have no relationship with the
+        // target (no mutual server, not friends, no pending request), and 404s
+        // for a nonexistent ID. Translate the raw HTTP error into guidance.
+        const code = (e && (e.httpStatus || e.status)) || 0;
+        const raw = e && e.message ? e.message : String(e);
+        let hint;
+        if (code === 404 || /Unknown User/i.test(raw)) {
+            hint = "❌ No user exists with that ID. Double-check the ID.";
+        } else if (code === 401 || code === 403 || /Unauthorized|Missing Access|403|401/i.test(raw)) {
+            hint = "❌ Can't read that user's profile. Discord only allows it when you **share a server with them, are friends, or have a pending friend request**. Join a mutual server (or add them) and try again.";
+        } else {
+            hint = `❌ Couldn't fetch that user's profile: ${raw}`;
+        }
+        utils.log(`[CLONE] Profile fetch failed for ${id} (code ${code}): ${raw}`);
+        try { await message.channel.send(hint); } catch (_) {}
         return;
     }
 
