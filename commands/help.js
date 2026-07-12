@@ -52,6 +52,12 @@ _(Both accept raw user/guild IDs. If a session is already running in a different
 \`$remove sudo <userID>\` \`(del, rm)\` — Revoke a user's access
 \`$sudo list\` — Show the owner + all sudo users
 
+**🟢 Presence** _(owner only)_
+\`$status <online | idle | dnd | invisible>\` — Set online status (aliases: \`active\`, \`away\`, \`busy\`, \`offline\`)
+\`$activity <text>\` \`(act)\` — Set activity (default: Playing), e.g. \`$activity Genshin Impact\`
+\`$activity <type> <text>\` — Type = \`playing\`/\`watching\`/\`listening\`/\`competing\`/\`streaming\`/\`custom\`
+\`$activity clear\` — Remove the activity
+
 **🟢 Spotify**
 Paste any Spotify link directly through \`$play\`:
 \`$play https://open.spotify.com/track/...\`

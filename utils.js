@@ -651,6 +651,39 @@ module.exports = {
             return false;
         }
     },
+    /**
+     * @description Read the persisted presence (status + activity) from presence.json
+     * at the project root. Returns null if the file is missing or unreadable, so
+     * callers can fall back to a default.
+     */
+    loadPresence: function () {
+        try {
+            const fs = require("fs");
+            const file = path.join(__dirname, "presence.json");
+            if (!fs.existsSync(file)) return null;
+            const data = JSON.parse(fs.readFileSync(file, "utf8"));
+            return data && typeof data === "object" ? data : null;
+        } catch (e) {
+            this.log(`[PRESENCE] Failed to read presence.json: ${e && e.message ? e.message : e}`);
+            return null;
+        }
+    },
+    /**
+     * @description Persist the presence object ({ status, activity }) to presence.json
+     * at the project root (anchored to __dirname). Returns true on success.
+     * @param {Object} presence e.g. { status: "dnd", activity: { type: "PLAYING", name: "Genshin" } }
+     */
+    savePresence: function (presence) {
+        try {
+            const fs = require("fs");
+            const payload = JSON.stringify(presence || {}, null, 2) + "\n";
+            fs.writeFileSync(path.join(__dirname, "presence.json"), payload, "utf8");
+            return true;
+        } catch (e) {
+            this.log(`[PRESENCE] Failed to persist presence.json: ${e && e.message ? e.message : e}`);
+            return false;
+        }
+    },
     log: function(content) {
         // NOTE: previously this function assigned every local (`date_ob`, `date`,
         // `month`, `year`, `dmy`, `hms`) without `let`/`const`, leaking them to the

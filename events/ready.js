@@ -11,7 +11,23 @@ module.exports = async (client) => {
         utils.log(`[LAVALINK] Failed to initialize Shoukaku: ${e.message}`);
     }
 
-    client.user.setActivity("gud music", {type: "LISTENING"});
+    // Restore the last presence set via $status / $activity, falling back to a
+    // sensible default. This runs on every boot so the presence survives restarts.
+    try {
+        const saved = utils.loadPresence();
+        const status = (saved && saved.status) || "online";
+        const activity = saved && saved.activity;
+
+        client.user.setStatus(status);
+        if (activity && activity.name) {
+            client.user.setActivity(activity.name, { type: activity.type || "PLAYING" });
+        } else if (!saved) {
+            // No persisted presence yet — keep the original default activity.
+            client.user.setActivity("gud music", { type: "LISTENING" });
+        }
+    } catch (e) {
+        utils.log(`[PRESENCE] Failed to restore presence on startup: ${e && e.message ? e.message : e}`);
+    }
 
     utils.log(`Logged in as ${client.user.username} !`);
 

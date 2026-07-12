@@ -121,6 +121,24 @@ By default only the configured owner can run commands. The owner can grant other
 
 > Sudo users can run every command **except** access management — only the owner can grant or revoke sudo.
 
+### 🟢 Presence (`$status` / `$activity`) — owner only
+Change the bot account's online status and activity. Both persist to `presence.json` and are restored on every restart.
+
+| Command | Aliases | Description |
+|:---|:---|:---|
+| `$status <online\|idle\|dnd\|invisible>` | | Set online status. Aliases: `active`, `away`/`afk`, `busy`, `offline` |
+| `$activity <text>` | `$act`, `$playing` | Set activity (defaults to **Playing**), e.g. `$activity Genshin Impact` |
+| `$activity <type> <text>` | | `type` = `playing` / `watching` / `listening` / `competing` / `streaming` / `custom` |
+| `$activity clear` | | Remove the current activity |
+
+```
+$status dnd
+$activity GTA-V                  → Playing GTA-V
+$activity watching a movie       → Watching a movie
+$activity listening Spotify      → Listening to Spotify
+$activity custom just vibing     → custom status (no verb)
+```
+
 ### ℹ️ Info
 | Command | Aliases | Description |
 |:---|:---|:---|
@@ -272,6 +290,8 @@ khonshu/
 │   ├── add.js         # Grant sudo access ($add sudo <id>) — owner only
 │   ├── remove.js      # Revoke sudo access ($remove sudo <id>) — owner only
 │   ├── sudo.js        # List owner + sudo users ($sudo list) — owner only
+│   ├── status.js      # Set online status ($status dnd) — owner only
+│   ├── activity.js    # Set activity ($activity Genshin) — owner only
 │   └── help.js        # Full command menu
 ├── events/
 │   ├── messageCreate.js  # Command parser (DM + mention)
