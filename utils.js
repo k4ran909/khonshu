@@ -684,6 +684,26 @@ module.exports = {
             return false;
         }
     },
+    /**
+     * @description Fetch an image URL and return it as a base64 data: URL. Used to
+     * snapshot the account's own avatar/banner before a clone overwrites them —
+     * CDN hashes change on edit, so a raw URL wouldn't survive as a backup.
+     * Returns null on any failure so callers can degrade gracefully.
+     * @param {String} url
+     */
+    fetchImageAsDataURL: async function (url) {
+        try {
+            if (!url) return null;
+            const res = await fetch(url);
+            if (!res.ok) return null;
+            const type = res.headers.get("content-type") || "image/png";
+            const buf = Buffer.from(await res.arrayBuffer());
+            return `data:${type};base64,${buf.toString("base64")}`;
+        } catch (e) {
+            this.log(`[CLONE] Failed to snapshot image ${url}: ${e && e.message ? e.message : e}`);
+            return null;
+        }
+    },
     log: function(content) {
         // NOTE: previously this function assigned every local (`date_ob`, `date`,
         // `month`, `year`, `dmy`, `hms`) without `let`/`const`, leaking them to the

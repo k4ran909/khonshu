@@ -58,6 +58,10 @@ _(Both accept raw user/guild IDs. If a session is already running in a different
 \`$activity <type> <text>\` — Type = \`playing\`/\`watching\`/\`listening\`/\`competing\`/\`streaming\`/\`custom\`
 \`$activity clear\` — Remove the activity
 
+**🎭 Profile Clone** _(owner only)_
+\`$clone <userID>\` — Copy a user's name, avatar, banner, accent & bio onto this account
+\`$clone restore\` — Revert to your original profile (backed up on first clone)
+
 **🟢 Spotify**
 Paste any Spotify link directly through \`$play\`:
 \`$play https://open.spotify.com/track/...\`

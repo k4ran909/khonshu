@@ -139,6 +139,19 @@ $activity listening Spotify      → Listening to Spotify
 $activity custom just vibing     → custom status (no verb)
 ```
 
+### 🎭 Profile Clone (`$clone`) — owner only
+Copy another user's profile onto the bot account: **display name, avatar, banner, accent color, and bio/About Me**. Your original profile is backed up to `profile-backup.json` on the first clone so you can revert.
+
+| Command | Description |
+|:---|:---|
+| `$clone <userID>` | Clone the target's profile (accepts a raw ID or `@mention`) |
+| `$clone restore` | Revert the account to your original (pre-clone) profile |
+
+> **Caveats:**
+> - **Bio and banner** can only be read when you share a mutual server with the target, are friends, or have a pending friend request (Discord API restriction). Name, avatar, and accent color always work.
+> - Only the **display name** (`global_name`) is cloned — the `@username` handle is not, as changing it requires your account password and is limited to 2 changes/hour.
+> - Avatar/banner edits are rate-limited by Discord; avoid rapid repeated clones.
+
 ### ℹ️ Info
 | Command | Aliases | Description |
 |:---|:---|:---|
@@ -292,6 +305,7 @@ khonshu/
 │   ├── sudo.js        # List owner + sudo users ($sudo list) — owner only
 │   ├── status.js      # Set online status ($status dnd) — owner only
 │   ├── activity.js    # Set activity ($activity Genshin) — owner only
+│   ├── clone.js       # Clone a user's profile ($clone <id>) — owner only
 │   └── help.js        # Full command menu
 ├── events/
 │   ├── messageCreate.js  # Command parser (DM + mention)

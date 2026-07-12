@@ -109,4 +109,5 @@ dist
 # Runtime secrets / local artifacts — never commit these
 cookies.txt
 presence.json
+profile-backup.json
 g
