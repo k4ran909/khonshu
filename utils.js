@@ -1076,7 +1076,8 @@ module.exports = {
                                     });
 
                                     player.on("exception", (data) => {
-                                        utils.log(`[LAVALINK] Track exception: ${data.message}`);
+                                        const errMsg = (data.exception && data.exception.message) || data.message || JSON.stringify(data);
+                                        utils.log(`[LAVALINK] Track exception: ${errMsg}`);
                                     });
 
                                     player.on("closed", (data) => {
