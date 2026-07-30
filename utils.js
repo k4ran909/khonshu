@@ -1075,9 +1075,29 @@ module.exports = {
                                         utils.play(q.songs[0]);
                                     });
 
-                                    player.on("exception", (data) => {
+                                    player.on("exception", async (data) => {
                                         const errMsg = (data.exception && data.exception.message) || data.message || JSON.stringify(data);
                                         utils.log(`[LAVALINK] Track exception: ${errMsg}`);
+                                        const q = global.queue.get("queue");
+                                        if (!q || !q.songs || q.songs.length === 0) return;
+                                        
+                                        const currentSong = q.songs[0];
+                                        if (currentSong && !currentSong._scFallbackTried) {
+                                            currentSong._scFallbackTried = true;
+                                            utils.log(`[LAVALINK] YouTube playback blocked on VPS IP. Falling back to SoundCloud for: ${currentSong.title}`);
+                                            try {
+                                                const scTrack = await lavalink.searchTrack(`scsearch:${currentSong.title}`);
+                                                if (scTrack) {
+                                                    const rawVol = (typeof q.volume === "number" && Number.isFinite(q.volume)) ? q.volume : 0.5;
+                                                    const vol = Math.max(0, Math.min(1000, Math.round(rawVol * 100)));
+                                                    await lavalink.playTrack(player, scTrack, vol);
+                                                    utils.log(`[LAVALINK] Playing via SoundCloud fallback: ${scTrack.info.title}`);
+                                                    return;
+                                                }
+                                            } catch (scErr) {
+                                                utils.log(`[LAVALINK] SoundCloud fallback play error: ${scErr.message}`);
+                                            }
+                                        }
                                     });
 
                                     player.on("closed", (data) => {
