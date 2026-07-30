@@ -1,3 +1,23 @@
+// Load .env file if present
+try {
+  const fs = require("fs");
+  const path = require("path");
+  const envPath = path.join(__dirname, ".env");
+  if (fs.existsSync(envPath)) {
+    const envConfig = fs.readFileSync(envPath, "utf8");
+    for (const line of envConfig.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#") && trimmed.includes("=")) {
+        const [key, ...vals] = trimmed.split("=");
+        const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
+        if (key && process.env[key.trim()] === undefined) {
+          process.env[key.trim()] = val;
+        }
+      }
+    }
+  }
+} catch (e) {}
+
 // Setup global undici proxy if HTTP_PROXY is defined in environment (Node 20+ fetch support)
 if (process.env.HTTP_PROXY) {
   try {
