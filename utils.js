@@ -1084,9 +1084,18 @@ module.exports = {
                                         const currentSong = q.songs[0];
                                         if (currentSong && !currentSong._scFallbackTried) {
                                             currentSong._scFallbackTried = true;
-                                            utils.log(`[LAVALINK] YouTube playback blocked on VPS IP. Falling back to SoundCloud for: ${currentSong.title}`);
+                                            // Sanitize title (remove (Lyrics), Ft., special chars, extra spaces)
+                                            const cleanTitle = (currentSong.title || "")
+                                                .replace(/\([^)]*\)/g, "")
+                                                .replace(/\[[^\]]*\]/g, "")
+                                                .replace(/ft\.|featuring/gi, "")
+                                                .replace(/[^a-zA-Z0-9\s]/g, " ")
+                                                .replace(/\s+/g, " ")
+                                                .trim();
+                                            const query = cleanTitle.length > 0 ? cleanTitle : currentSong.title;
+                                            utils.log(`[LAVALINK] YouTube playback blocked on VPS IP. Falling back to SoundCloud for: ${query}`);
                                             try {
-                                                const scTrack = await lavalink.searchTrack(`scsearch:${currentSong.title}`);
+                                                const scTrack = await lavalink.searchTrack(`scsearch:${query}`);
                                                 if (scTrack) {
                                                     const rawVol = (typeof q.volume === "number" && Number.isFinite(q.volume)) ? q.volume : 0.5;
                                                     const vol = Math.max(0, Math.min(1000, Math.round(rawVol * 100)));
